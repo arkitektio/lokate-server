@@ -1,0 +1,14 @@
+services:
+  db:
+    # daten carries PostGIS, which the generated `geom` columns need.
+    image: ${DATEN_IMAGE:-jhnnsrs/daten:next}
+    # Throwaway test DB: trade durability for speed
+    command: postgres -c fsync=off -c synchronous_commit=off -c full_page_writes=off
+    environment:
+      POSTGRES_MULTIPLE_DATABASES: testdb
+      POSTGRES_PASSWORD: test
+      POSTGRES_USER: test
+    # No host port: docker picks a free one and `backend_stack` asks the running stack
+    # which, so parallel suites under mounts/ never collide on a pinned port.
+    ports:
+      - 5432

@@ -1,0 +1,20 @@
+# A standalone dev stack: lokate, its database (daten carries PostGIS) and redis.
+services:
+  db:
+    environment:
+      POSTGRES_MULTIPLE_DATABASES: lokate
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: fostgres
+    image: jhnnsrs/daten:next
+  lokate:
+    build: .
+    command: bash run-debug.sh
+    ports:
+      - 8888:80
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - .:/workspace
+  redis:
+    image: redis:latest
