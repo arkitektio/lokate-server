@@ -41,6 +41,7 @@ Rules:
 - **Every write is safe to repeat.** Writes upsert on the unique key. An upsert that changes nothing keeps the row's change stamp, so a retried batch changes nothing.
 - **The changes cursor is exact.** `received_at` is a sequence stamp. All of one user's writes hold that user's advisory lock from before they draw a stamp until they commit, and `changes` reads the four tables in a single statement. A reader therefore never pages past a row that commits later. `tests/test_backup.py` proves this with two writers that commit out of order.
 - **Batches over 1000 rows are refused** with `BATCH_TOO_LARGE`.
+- **Row values are stored as sent.** Only a batch the phone's own algorithm could never produce is refused: one that is too large, repeats a clientId, names no device, or has a segment before `from`. The phone retries a failed batch forever, so refusing a single point with a skewed clock would stall its backup for good.
 - **Retention is enforced on the user's own writes.** Nothing loops in this service. Monthly partitions are created on demand by the first upload that needs them.
 
 ## Development

@@ -127,12 +127,16 @@ async def test_points_land_in_monthly_partitions(run):
     ]
 
 
-async def test_absurd_times_and_positions_are_refused(run):
-    for bad in ({"ts": "1970-01-01T00:00:00+00:00"}, {"ts": "2999-01-01T00:00:00+00:00"}, {"lat": 91.0}):
-        point = {"clientId": "x", "ts": iso(0), "lat": 1.0, "lon": 2.0, **bad}
-        result = await run(UPLOAD, {"points": [point]}, errors=True)
-        assert result.errors, bad
-    assert await stamps("timeline_point") == []
+async def test_a_skewed_clock_does_not_stall_the_batch(run):
+    """The phone retries a failed batch forever, so one odd point must not fail the rest."""
+    batch = points(5) + [
+        {"clientId": "epoch", "ts": "1970-01-01T00:00:00+00:00", "lat": 1.0, "lon": 2.0},
+        {"clientId": "future", "ts": "2999-01-01T00:00:00+00:00", "lat": 1.0, "lon": 2.0},
+    ]
+    assert (await run(UPLOAD, {"points": batch}))["uploadPoints"] == {"accepted": 7, "duplicates": 0}
+    assert (await run(UPLOAD, {"points": batch}))["uploadPoints"] == {"accepted": 0, "duplicates": 7}
+    # A segment ending before it starts is stored as sent too.
+    await run(REPLACE, {"from": "1970-01-01T00:00:00+00:00", "visits": [visit("odd", 10, 5)], "trips": []})
 
 
 async def test_writes_need_a_device(run):

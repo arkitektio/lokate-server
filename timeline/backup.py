@@ -12,6 +12,11 @@ Rules they keep:
   before any stamp is drawn and held to commit. That is what makes the ``changes`` cursor
   exact (see :mod:`timeline.models`). Different users never wait on each other.
 * **Batches are at most** :data:`MAX_BATCH` **rows**; a larger one is refused, not truncated.
+* **Only a batch the phone's own algorithm can never produce is refused** (too large, a
+  clientId twice, no device, a segment before ``from``). Row *values* are stored as sent:
+  the phone retries a failed batch forever and keeps unsynced points until they upload, so
+  refusing one point from a skewed clock would stall its backup for good. (A batch names
+  at most 1000 months, which bounds the partitions one call can create.)
 """
 
 import datetime
@@ -39,11 +44,6 @@ CONFIRM_DELETE = "DELETE"
 
 _USER_LOCK_BASE = 0x6C6F_6B61 << 32
 """The bigint advisory-lock space for per-user locks ("loka" in the high half)."""
-
-#: Timestamps outside this window are refused: a phone clock at 1970 (or 2999) would
-#: otherwise create a partition per month it names.
-EARLIEST = datetime.datetime(2000, 1, 1, tzinfo=datetime.timezone.utc)
-FUTURE_SLACK = datetime.timedelta(days=2)
 
 MAX_RETENTION_DAYS = 36500
 
@@ -171,23 +171,6 @@ def _check_client_ids(name: str, ids: list[str]) -> None:
         seen.add(client_id)
 
 
-def _check_time(name: str, value: datetime.datetime) -> datetime.datetime:
-    value = _aware(value)
-    if value < EARLIEST or value > timezone.now() + FUTURE_SLACK:
-        raise invalid(f"{name}: {value.isoformat()} is outside the accepted range ({EARLIEST.date()} to now).", "INVALID_TIME")
-    return value
-
-
-def _check_position(name: str, lat: float, lon: float) -> None:
-    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
-        raise invalid(f"{name}: ({lat}, {lon}) is not a WGS84 latitude/longitude.")
-
-
-def _check_span(name: str, start: datetime.datetime, end: datetime.datetime) -> None:
-    if end < start:
-        raise invalid(f"{name}: ends before it starts.")
-
-
 # --------------------------------------------------------------------------- locking & devices
 
 
@@ -244,10 +227,7 @@ def upload_points(caller: Caller, points: list[PointIn]) -> UploadResult:
     device_id = caller.require_device()
     check_batch("points", points)
     _check_client_ids("points", [p.client_id for p in points])
-    rows = []
-    for p in points:
-        _check_position(f"point {p.client_id}", p.lat, p.lon)
-        rows.append((p, _check_time(f"point {p.client_id}", p.ts)))
+    rows = [(p, _aware(p.ts)) for p in points]
     if not rows:
         return UploadResult(accepted=0, duplicates=0)
 
@@ -321,19 +301,16 @@ def replace_segments(caller: Caller, from_: datetime.datetime, visits: list[Visi
     or before ``from_``, is touched — so a sent row starting before ``from_`` is refused.
     """
     device_id = caller.require_device()
-    from_ = _check_time("from", from_)
+    from_ = _aware(from_)
     check_batch("visits", visits)
     check_batch("trips", trips)
     _check_client_ids("visits", [v.client_id for v in visits])
     _check_client_ids("trips", [t.client_id for t in trips])
     valid_modes = set(models.TripMode.values)
     for v in visits:
-        _check_position(f"visit {v.client_id}", v.lat, v.lon)
-        _check_span(f"visit {v.client_id}", v.start, v.end)
         if _aware(v.start) < from_:
             raise invalid(f"visit {v.client_id} starts before `from`; replaceSegments only replaces from `from` on.")
     for t in trips:
-        _check_span(f"trip {t.client_id}", t.start, t.end)
         if _aware(t.start) < from_:
             raise invalid(f"trip {t.client_id} starts before `from`; replaceSegments only replaces from `from` on.")
         if t.mode not in valid_modes:
@@ -414,8 +391,6 @@ def sync_places(caller: Caller, places: list[PlaceIn], deleted: list[DeletedIn])
     check_batch("deleted", deleted)
     _check_client_ids("places", [p.client_id for p in places])
     _check_client_ids("deleted", [d.client_id for d in deleted])
-    for p in places:
-        _check_position(f"place {p.client_id}", p.lat, p.lon)
 
     applied = 0
     stale: dict[int, models.Place] = {}
