@@ -344,7 +344,7 @@ def test_changes_skips_nothing_when_writers_commit_out_of_order(transactional_db
         seen: list[str] = []
         while True:
             page = backup.changes(phone_a, cursor, limit=3)
-            seen += [p["client_id"] for p in page.points]
+            seen += [p.client_id for p in page.points]
             cursor = page.next_cursor
             if not page.has_more:
                 return seen, cursor
@@ -377,24 +377,6 @@ def test_changes_skips_nothing_when_writers_commit_out_of_order(transactional_db
 
 # --------------------------------------------------------------------------- your data
 
-ACCESS_LOG = "query { accessLog { operation range rows deviceId } }"
-
-
-async def test_every_read_is_logged_for_the_user_only(run):
-    await run(UPLOAD, {"points": points(3)})
-    await run(STATE, token="phone-b")
-    await run(CHANGES)
-    await run(CHANGES, token="other")
-
-    log = (await run(ACCESS_LOG))["accessLog"]
-    assert [(e["operation"], e["deviceId"]) for e in log] == [("changes", "phone-a"), ("syncState", "phone-b")]
-    assert log[0]["rows"] == 3
-    # Reading the log is a read too.
-    assert (await run(ACCESS_LOG))["accessLog"][0]["operation"] == "accessLog"
-    # The listing is taken before its own read is recorded.
-    assert [e["operation"] for e in (await run(ACCESS_LOG, token="other"))["accessLog"]] == ["changes"]
-
-
 DELETE = 'mutation Delete($confirm: String!) { deleteServerCopy(confirm: $confirm) }'
 
 
@@ -412,22 +394,3 @@ async def test_delete_server_copy_needs_confirmation_and_spares_other_users(run)
     page = (await run(CHANGES))["changes"]
     assert page["points"] == page["visits"] == page["trips"] == page["places"] == []
     assert (await run(STATE, token="other"))["syncState"]["pointCount"] == 3
-
-
-RETENTION = "mutation Keep($days: Int) { setRetention(days: $days) { days } }"
-
-
-async def test_retention_drops_old_points_and_segments(run):
-    now = datetime.datetime.now(datetime.timezone.utc)
-    recent = (now - datetime.timedelta(days=1)).isoformat()
-    old = (now - datetime.timedelta(days=40)).isoformat()
-    await run(UPLOAD, {"points": [{"clientId": "old", "ts": old, "lat": 1.0, "lon": 2.0}, {"clientId": "new", "ts": recent, "lat": 1.0, "lon": 2.0}]})
-    await run(UPLOAD, {"points": [{"clientId": "theirs", "ts": old, "lat": 1.0, "lon": 2.0}]}, token="other")
-
-    assert (await run(RETENTION, {"days": 30}))["setRetention"] == {"days": 30}
-    assert (await run("query { retention { days } }"))["retention"] == {"days": 30}
-    assert [p["clientId"] for p in (await run(CHANGES))["changes"]["points"]] == ["new"]
-    assert (await run(STATE, token="other"))["syncState"]["pointCount"] == 1
-
-    assert (await run(RETENTION, {"days": 0}, errors=True)).errors
-    assert (await run(RETENTION, {"days": None}))["setRetention"] == {"days": None}

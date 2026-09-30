@@ -6,6 +6,7 @@ plain ``lat``/``lon`` columns the API reads and writes, GiST-indexed. Python nev
 geometry.
 """
 
+import math
 from typing import Any
 
 from django.db import models
@@ -30,3 +31,39 @@ class MakePoint(Func):
     template = "ST_SetSRID(ST_MakePoint(%(expressions)s), 4326)"
     arity = 2
     output_field = GeometryPointField()
+
+
+@GeometryPointField.register_lookup
+class InBox(models.Lookup):
+    """``geom__in_box=(south, west, north, east)``: inside a lat/lon rectangle (a map viewport).
+
+    ``&&`` against an envelope, so the GiST index answers it.
+    """
+
+    lookup_name = "in_box"
+    prepare_rhs = False
+
+    def as_sql(self, compiler: Any, connection: Any) -> tuple[str, list]:
+        lhs, params = self.process_lhs(compiler, connection)
+        south, west, north, east = (float(v) for v in self.rhs)
+        return f"{lhs} && ST_MakeEnvelope(%s, %s, %s, %s, 4326)", [*params, west, south, east, north]
+
+
+@GeometryPointField.register_lookup
+class Near(models.Lookup):
+    """``geom__near=(lat, lon, meters)``: within ``meters`` of a point, measured on the spheroid.
+
+    An envelope test first (index-backed, generous at any latitude), then the exact geodesic
+    distance on what is left.
+    """
+
+    lookup_name = "near"
+    prepare_rhs = False
+
+    def as_sql(self, compiler: Any, connection: Any) -> tuple[str, list]:
+        lhs, params = self.process_lhs(compiler, connection)
+        lat, lon, meters = (float(v) for v in self.rhs)
+        degrees = meters / (111_320 * max(math.cos(math.radians(lat)), 0.01))
+        here = "ST_SetSRID(ST_MakePoint(%s, %s), 4326)"
+        sql = f"({lhs} && ST_Expand({here}, %s) AND ST_DWithin({lhs}::geography, {here}::geography, %s))"
+        return sql, [*params, lon, lat, degrees, *params, lon, lat, meters]

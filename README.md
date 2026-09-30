@@ -13,7 +13,6 @@ and has a python client, [`lokate`](https://github.com/jhnnsrs/lokate).
 | `timeline_visit` | `(device, client_id)` | |
 | `timeline_trip` | `(device, client_id)` | |
 | `timeline_place` | `(user, client_id)` | shared by all of a user's phones; deleted places stay as tombstones |
-| `timeline_accesslog` | | one row per read; the user can list their own |
 
 The user and the device come from the token: the device is its `client_device` claim.
 Every resolver filters by user, and every write is scoped to the device. There is no admin
@@ -34,7 +33,14 @@ timestamps.
 | `syncPlaces(places, deleted)` | Last write wins on `updatedAt`, and a tombstone beats an update at the same instant or older. Server copies that win come back in `stale`. |
 | `syncState` | The calling device's newest point, its point count, and the `from` of its last replace. |
 | `changes(cursor, limit)` | Everything the user has, from all devices, in change order. Page until `hasMore` is false. |
-| `accessLog`, `retention`, `setRetention`, `deleteServerCopy(confirm: "DELETE")` | Tools for your own data. |
+| `deleteServerCopy(confirm: "DELETE")` | Deletes everything of yours on the server. |
+| `devices`, `points`, `visits`, `trips`, `places` (+ `…Count`, and one by id) | The stored rows, paginated and orderable. Filters: time (`since`/`until`), `devices`, a map box (`inBox`), a radius (`near`), plus per-type ones (`maxAccuracy`, `places`, `minDuration`, `modes`, `search`, …). |
+| `day(date, timezone)` | A calendar day's visits and trips in order, with totals. |
+| `route(since, until, devices, simplify, maxAccuracy)` | One GeoJSON LineString per device, optionally simplified, with its geodesic length. |
+| `stats(since, until, granularity, timezone)` | Points, visits, trips, and distance and time per mode, for each day, week or month. |
+| `placeStats(since, until)` | Time spent per place. |
+
+Every read returns only the caller's rows, from all of their devices. Tombstoned places are sync bookkeeping and are never listed.
 
 Rules:
 
@@ -42,7 +48,7 @@ Rules:
 - **The changes cursor is exact.** `received_at` is a sequence stamp. All of one user's writes hold that user's advisory lock from before they draw a stamp until they commit, and `changes` reads the four tables in a single statement. A reader therefore never pages past a row that commits later. `tests/test_backup.py` proves this with two writers that commit out of order.
 - **Batches over 1000 rows are refused** with `BATCH_TOO_LARGE`.
 - **Row values are stored as sent.** Only a batch the phone's own algorithm could never produce is refused: one that is too large, repeats a clientId, names no device, or has a segment before `from`. The phone retries a failed batch forever, so refusing a single point with a skewed clock would stall its backup for good.
-- **Retention is enforced on the user's own writes.** Nothing loops in this service. Monthly partitions are created on demand by the first upload that needs them.
+- **Nothing loops in this service.** Monthly partitions are created on demand by the first upload that needs them.
 
 ## Development
 

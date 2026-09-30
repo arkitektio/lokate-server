@@ -45,8 +45,6 @@ CONFIRM_DELETE = "DELETE"
 _USER_LOCK_BASE = 0x6C6F_6B61 << 32
 """The bigint advisory-lock space for per-user locks ("loka" in the high half)."""
 
-MAX_RETENTION_DAYS = 36500
-
 
 def invalid(message: str, code: str = "INVALID_INPUT") -> GraphQLError:
     """An error the phone caused and can act on; ``extensions.code`` says which."""
@@ -139,10 +137,10 @@ class SyncState:
 
 @dataclass
 class ChangeSet:
-    points: list[dict[str, Any]]
-    visits: list[dict[str, Any]]
-    trips: list[dict[str, Any]]
-    places: list[dict[str, Any]]
+    points: list[models.Point]
+    visits: list[models.Visit]
+    trips: list[models.Trip]
+    places: list[models.Place]
     deleted_places: list[str]
     next_cursor: str | None
     has_more: bool
@@ -189,36 +187,6 @@ def _touch(device: models.Device, **fields: Any) -> None:
     models.Device.objects.filter(pk=device.pk).update(last_upload_at=timezone.now(), **fields)
 
 
-def purge_expired(user: User) -> int:
-    """Drop the user's points and segments older than their retention (none: keep all).
-
-    Runs inside every write of that user, under their lock: nothing loops in this service,
-    so retention is enforced when the user's phone next writes (or sets it).
-    """
-    days = models.Retention.objects.filter(user=user).values_list("days", flat=True).first()
-    if not days:
-        return 0
-    cutoff = timezone.now() - datetime.timedelta(days=days)
-    with connection.cursor() as cursor:
-        cursor.execute("DELETE FROM timeline_point WHERE user_id = %s AND ts < %s", [user.pk, cutoff])
-        removed = cursor.rowcount
-    removed += models.Visit.objects.filter(user=user, end__lt=cutoff).delete()[0]
-    removed += models.Trip.objects.filter(user=user, end__lt=cutoff).delete()[0]
-    return removed
-
-
-def log_read(caller: Caller, operation: str, range: str = "", rows: int = 0) -> None:
-    """Record one read of the caller's data (every read is recorded)."""
-    models.AccessLog.objects.create(
-        user=caller.user,
-        device_id=caller.device_id,
-        client_id=caller.client_id,
-        operation=operation,
-        range=range[:500],
-        rows=rows,
-    )
-
-
 # --------------------------------------------------------------------------- points
 
 
@@ -259,7 +227,6 @@ def upload_points(caller: Caller, points: list[PointIn]) -> UploadResult:
             )
             accepted = cursor.rowcount
         _touch(device)
-        purge_expired(caller.user)
     return UploadResult(accepted=accepted, duplicates=len(rows) - accepted)
 
 
@@ -362,7 +329,6 @@ def replace_segments(caller: Caller, from_: datetime.datetime, visits: list[Visi
             )
             deleted_trips = cursor.rowcount
         _touch(device, segments_from=from_)
-        purge_expired(caller.user)
     return ReplaceResult(deleted_visits=deleted_visits, deleted_trips=deleted_trips, visits=len(visits), trips=len(trips))
 
 
@@ -451,32 +417,31 @@ def sync_state(caller: Caller) -> SyncState:
             cursor.execute("SELECT max(ts), count(*) FROM timeline_point WHERE device_id = %s", [device.pk])
             last, count = cursor.fetchone()
         state = SyncState(last_point_ts=last, point_count=count, segments_from=device.segments_from)
-    log_read(caller, "syncState", f"device {device_id}", rows=state.point_count)
     return state
 
 
 _CHANGES = """
 WITH p AS (
     SELECT 'point' AS kind, pt.received_at, jsonb_build_object(
-        'client_id', pt.client_id, 'device_id', d.device_id, 'ts', pt.ts, 'lat', pt.lat, 'lon', pt.lon,
+        'id', pt.id, 'device_id', pt.device_id, 'client_id', pt.client_id, 'ts', pt.ts, 'lat', pt.lat, 'lon', pt.lon,
         'acc', pt.acc, 'speed', pt.speed, 'heading', pt.heading, 'alt', pt.alt) AS data
-    FROM timeline_point pt JOIN timeline_device d ON d.id = pt.device_id
+    FROM timeline_point pt
     WHERE pt.user_id = %(user)s AND pt.received_at > %(after)s ORDER BY pt.received_at LIMIT %(take)s
 ), v AS (
     SELECT 'visit', vi.received_at, jsonb_build_object(
-        'client_id', vi.client_id, 'device_id', d.device_id, 'start', vi.start, 'end', vi."end", 'lat', vi.lat, 'lon', vi.lon,
+        'id', vi.id, 'device_id', vi.device_id, 'client_id', vi.client_id, 'start', vi.start, 'end', vi."end", 'lat', vi.lat, 'lon', vi.lon,
         'radius', vi.radius, 'point_count', vi.point_count, 'place_client_id', vi.place_client_id)
-    FROM timeline_visit vi JOIN timeline_device d ON d.id = vi.device_id
+    FROM timeline_visit vi
     WHERE vi.user_id = %(user)s AND vi.received_at > %(after)s ORDER BY vi.received_at LIMIT %(take)s
 ), t AS (
     SELECT 'trip', tr.received_at, jsonb_build_object(
-        'client_id', tr.client_id, 'device_id', d.device_id, 'start', tr.start, 'end', tr."end", 'from_visit', tr.from_visit,
+        'id', tr.id, 'device_id', tr.device_id, 'client_id', tr.client_id, 'start', tr.start, 'end', tr."end", 'from_visit', tr.from_visit,
         'to_visit', tr.to_visit, 'distance', tr.distance, 'mode', tr.mode)
-    FROM timeline_trip tr JOIN timeline_device d ON d.id = tr.device_id
+    FROM timeline_trip tr
     WHERE tr.user_id = %(user)s AND tr.received_at > %(after)s ORDER BY tr.received_at LIMIT %(take)s
 ), pl AS (
     SELECT 'place', pc.received_at, jsonb_build_object(
-        'client_id', pc.client_id, 'name', pc.name, 'lat', pc.lat, 'lon', pc.lon, 'radius', pc.radius,
+        'id', pc.id, 'client_id', pc.client_id, 'name', pc.name, 'lat', pc.lat, 'lon', pc.lon, 'radius', pc.radius,
         'updated_at', pc.updated_at, 'deleted_at', pc.deleted_at)
     FROM timeline_place pc
     WHERE pc.user_id = %(user)s AND pc.received_at > %(after)s ORDER BY pc.received_at LIMIT %(take)s
@@ -525,32 +490,25 @@ def changes(caller: Caller, cursor: str | None, limit: int = MAX_BATCH) -> Chang
 
     has_more = len(rows) > limit
     rows = rows[:limit]
+    # Devices are read after the snapshot: a row's device committed with (or before) it.
+    devices = {d.pk: d for d in models.Device.objects.filter(user=caller.user)}
     result = ChangeSet(points=[], visits=[], trips=[], places=[], deleted_places=[], next_cursor=cursor, has_more=has_more)
     for kind, _stamp, data in rows:
         row = _row(data)
-        if kind == "point":
-            result.points.append(row)
-        elif kind == "visit":
-            result.visits.append(row)
-        elif kind == "trip":
-            result.trips.append(row)
-        elif row["deleted_at"] is not None:
-            result.deleted_places.append(row["client_id"])
-        else:
-            result.places.append(row)
+        if kind == "place":
+            if row["deleted_at"] is not None:
+                result.deleted_places.append(row["client_id"])
+            else:
+                result.places.append(models.Place(user=caller.user, **row))
+            continue
+        model, bucket = {"point": (models.Point, result.points), "visit": (models.Visit, result.visits), "trip": (models.Trip, result.trips)}[kind]
+        device = devices.get(row.pop("device_id"))
+        if device is None:
+            continue  # the server copy was deleted between the two reads
+        bucket.append(model(user=caller.user, device=device, **row))
     if rows:
         result.next_cursor = str(rows[-1][1])
-    log_read(caller, "changes", f"after {after} to {result.next_cursor or after}", rows=len(rows))
     return result
-
-
-def access_log(caller: Caller, limit: int = 100, offset: int = 0) -> list[models.AccessLog]:
-    """The user's own access log, newest first. Reading it is recorded too."""
-    if not 1 <= limit <= MAX_BATCH or offset < 0:
-        raise invalid(f"limit must be between 1 and {MAX_BATCH}, offset at least 0.")
-    entries = list(models.AccessLog.objects.filter(user=caller.user).order_by("-at", "-id")[offset : offset + limit])
-    log_read(caller, "accessLog", f"offset {offset} limit {limit}", rows=len(entries))
-    return entries
 
 
 # --------------------------------------------------------------------------- your data
@@ -559,7 +517,7 @@ def access_log(caller: Caller, limit: int = 100, offset: int = 0) -> list[models
 def delete_server_copy(caller: Caller, confirm: str) -> int:
     """Delete all of the user's data on this server; returns how many points, visits, trips and places went.
 
-    Devices, retention and the access log go too. The phone keeps its own copy; with backup
+    Its devices go too. The phone keeps its own copy; with backup
     still on, its next sync uploads it again.
     """
     if confirm != CONFIRM_DELETE:
@@ -574,22 +532,5 @@ def delete_server_copy(caller: Caller, confirm: str) -> int:
         count += models.Place.objects.filter(user=caller.user).delete()[0]
         with connection.cursor() as cursor:
             cursor.execute("DELETE FROM timeline_device WHERE user_id = %s", [caller.user.pk])
-        models.Retention.objects.filter(user=caller.user).delete()
-        models.AccessLog.objects.filter(user=caller.user).delete()
     logger.info("Deleted the server copy of user %s (%d rows)", caller.user.pk, count)
     return count
-
-
-def retention(caller: Caller) -> int | None:
-    return models.Retention.objects.filter(user=caller.user).values_list("days", flat=True).first()
-
-
-def set_retention(caller: Caller, days: int | None) -> int | None:
-    """Keep the user's points and segments ``days`` days (None: forever); applies at once."""
-    if days is not None and not 1 <= days <= MAX_RETENTION_DAYS:
-        raise invalid(f"days must be between 1 and {MAX_RETENTION_DAYS}, or null to keep everything.")
-    with transaction.atomic():
-        user_lock(caller.user.pk)
-        models.Retention.objects.update_or_create(user=caller.user, defaults={"days": days})
-        purge_expired(caller.user)
-    return days

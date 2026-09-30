@@ -162,26 +162,3 @@ class Place(models.Model):
             models.Index(fields=["user", "received_at"], name="tl_place_user_stamp"),
             GistIndex(fields=["geom"], name="tl_place_geom"),
         ]
-
-
-class AccessLog(models.Model):
-    """One read of a user's data. The user can list their own (``accessLog``)."""
-
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="+")
-    device_id = models.CharField(max_length=2000, null=True, blank=True, help_text="The reading token's client_device claim.")
-    client_id = models.CharField(max_length=2000, null=True, blank=True, help_text="The reading token's OAuth client.")
-    operation = models.CharField(max_length=100)
-    range = models.CharField(max_length=500, blank=True, default="", help_text="What was read, e.g. a cursor span.")
-    rows = models.IntegerField(default=0, help_text="How many rows the read returned.")
-    at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        indexes = [models.Index(fields=["user", "-at"], name="tl_accesslog_user_at")]
-
-
-class Retention(models.Model):
-    """How long the server keeps a user's points and segments (unset: forever)."""
-
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="lokate_retention")
-    days = models.PositiveIntegerField(null=True, blank=True)
-    updated_at = models.DateTimeField(auto_now=True)

@@ -1,78 +1,21 @@
-"""The lokate GraphQL API: types, inputs and resolvers over :mod:`timeline.backup`.
+"""The lokate GraphQL API beyond the plain object fields: sync I/O and aggregate reads.
 
-Resolvers only convert: the protocol lives in ``backup``, which runs synchronously in a
-thread (``sync_to_async``), one transaction per call.
+The object types (Device, Point, Visit, Trip, Place) live in :mod:`timeline.types` and are
+shared by both. Resolvers only convert: the protocol lives in :mod:`timeline.backup` and the
+aggregates in :mod:`timeline.reads`, which run synchronously in a thread (``sync_to_async``).
 """
 
 import datetime
-from enum import Enum
-from typing import Annotated, Any
+from typing import Annotated
 
 import strawberry
 from asgiref.sync import sync_to_async
 from kante.types import Info
 
-from timeline import backup, models
+from timeline import backup, enums, reads, types
 from timeline.identity import caller
 
-# --------------------------------------------------------------------------- types
-
-
-@strawberry.enum(description="How a trip was travelled, as the phone classified it.")
-class TripMode(Enum):
-    WALK = "WALK"
-    BIKE = "BIKE"
-    VEHICLE = "VEHICLE"
-    UNKNOWN = "UNKNOWN"
-
-
-@strawberry.type(description="One location fix.")
-class Point:
-    client_id: strawberry.ID
-    device_id: strawberry.ID = strawberry.field(description="The device (token client_device) that recorded it.")
-    ts: datetime.datetime
-    lat: float
-    lon: float
-    acc: float | None
-    speed: float | None
-    heading: float | None
-    alt: float | None
-
-
-@strawberry.type(description="A stay at one spot.")
-class Visit:
-    client_id: strawberry.ID
-    device_id: strawberry.ID
-    start: datetime.datetime
-    end: datetime.datetime
-    lat: float
-    lon: float
-    radius: float
-    point_count: int
-    place_client_id: strawberry.ID | None
-
-
-@strawberry.type(description="A movement between two visits.")
-class Trip:
-    client_id: strawberry.ID
-    device_id: strawberry.ID
-    start: datetime.datetime
-    end: datetime.datetime
-    from_visit: strawberry.ID | None
-    to_visit: strawberry.ID | None
-    distance: float
-    mode: TripMode
-
-
-@strawberry.type(description="A named place, shared by all of a user's phones. A tombstone has deletedAt set and nothing else but its key.")
-class Place:
-    client_id: strawberry.ID
-    name: str | None
-    lat: float | None
-    lon: float | None
-    radius: float | None
-    updated_at: datetime.datetime
-    deleted_at: datetime.datetime | None
+# --------------------------------------------------------------------------- sync types
 
 
 @strawberry.type(description="The calling device's watermarks.")
@@ -99,34 +42,70 @@ class ReplaceResult:
 @strawberry.type
 class PlaceSyncResult:
     applied: int
-    stale: list[Place] = strawberry.field(description="Places whose server copy is newer; the phone takes them (deletedAt set: delete it).")
+    stale: list[types.Place] = strawberry.field(description="Places whose server copy is newer; the phone takes them (deletedAt set: delete it).")
 
 
 @strawberry.type(description="One page of everything the user has, from all their devices, in change order.")
 class ChangeSet:
-    points: list[Point]
-    visits: list[Visit]
-    trips: list[Trip]
-    places: list[Place]
+    points: list[types.Point]
+    visits: list[types.Visit]
+    trips: list[types.Trip]
+    places: list[types.Place]
     deleted_places: list[strawberry.ID]
     next_cursor: str | None
     has_more: bool
 
 
-@strawberry.type(description="One read of your data.")
-class AccessLogEntry:
-    id: strawberry.ID
-    operation: str
-    range: str
-    rows: int
-    at: datetime.datetime
-    device_id: str | None = strawberry.field(description="The reading token's client_device claim.")
-    client_id: str | None = strawberry.field(description="The reading token's OAuth client.")
+# --------------------------------------------------------------------------- read types
 
 
-@strawberry.type(description="How long the server keeps your points and segments.")
-class Retention:
-    days: int | None = strawberry.field(description="Null: forever.")
+@strawberry.type(description="One calendar day of the timeline, across all your devices.")
+class Day:
+    date: datetime.date
+    start: datetime.datetime = strawberry.field(description="Midnight, in the requested time zone.")
+    end: datetime.datetime
+    visits: list[types.Visit] = strawberry.field(description="Visits overlapping the day, oldest first.")
+    trips: list[types.Trip] = strawberry.field(description="Trips overlapping the day, oldest first.")
+    point_count: int
+    distance: float = strawberry.field(description="Meters travelled, summed over the day's trips.")
+
+
+@strawberry.type(description="One device's points over a time range, joined into a line.")
+class Track:
+    device: types.Device
+    start: datetime.datetime
+    end: datetime.datetime
+    point_count: int
+    distance: float = strawberry.field(description="Geodesic length of the (unsimplified) line, meters.")
+    geojson: str = strawberry.field(description="A GeoJSON LineString (coordinates are [lon, lat]).")
+
+
+@strawberry.type(description="Trips of one mode within a stats bucket.")
+class ModeStat:
+    mode: enums.TripMode
+    trips: int
+    distance: float = strawberry.field(description="Meters.")
+    seconds: float
+
+
+@strawberry.type(description="Totals for one day, week or month.")
+class StatsBucket:
+    start: datetime.datetime
+    point_count: int
+    visit_count: int
+    trip_count: int
+    distance: float = strawberry.field(description="Meters, over all trips.")
+    by_mode: list[ModeStat]
+
+
+@strawberry.type(description="Time spent at one place.")
+class PlaceStat:
+    place_client_id: strawberry.ID
+    place: types.Place | None = strawberry.field(description="None if the place was deleted.")
+    visit_count: int
+    seconds: float
+    first_visit_at: datetime.datetime
+    last_visit_at: datetime.datetime
 
 
 # --------------------------------------------------------------------------- inputs
@@ -162,7 +141,7 @@ class TripInput:
     start: datetime.datetime
     end: datetime.datetime
     distance: float
-    mode: TripMode
+    mode: enums.TripMode
     from_visit: strawberry.ID | None = None
     to_visit: strawberry.ID | None = None
 
@@ -183,35 +162,7 @@ class DeletedInput:
     deleted_at: datetime.datetime
 
 
-# --------------------------------------------------------------------------- conversion
-
-
-def _place(row: models.Place | dict[str, Any]) -> Place:
-    get = row.get if isinstance(row, dict) else lambda key: getattr(row, key)
-    return Place(
-        client_id=strawberry.ID(get("client_id")),
-        name=get("name"),
-        lat=get("lat"),
-        lon=get("lon"),
-        radius=get("radius"),
-        updated_at=get("updated_at"),
-        deleted_at=get("deleted_at"),
-    )
-
-
-def _point(row: dict[str, Any]) -> Point:
-    return Point(**row)
-
-
-def _visit(row: dict[str, Any]) -> Visit:
-    return Visit(**row)
-
-
-def _trip(row: dict[str, Any]) -> Trip:
-    return Trip(**{**row, "mode": TripMode(row["mode"])})
-
-
-# --------------------------------------------------------------------------- queries
+# --------------------------------------------------------------------------- sync queries
 
 
 async def sync_state(info: Info) -> SyncState:
@@ -222,26 +173,63 @@ async def sync_state(info: Info) -> SyncState:
 async def changes(info: Info, cursor: str | None = None, limit: int | None = backup.MAX_BATCH) -> ChangeSet:
     page = await sync_to_async(backup.changes)(caller(info), cursor, backup.MAX_BATCH if limit is None else limit)
     return ChangeSet(
-        points=[_point(r) for r in page.points],
-        visits=[_visit(r) for r in page.visits],
-        trips=[_trip(r) for r in page.trips],
-        places=[_place(r) for r in page.places],
+        points=page.points,  # type: ignore[arg-type]
+        visits=page.visits,  # type: ignore[arg-type]
+        trips=page.trips,  # type: ignore[arg-type]
+        places=page.places,  # type: ignore[arg-type]
         deleted_places=[strawberry.ID(c) for c in page.deleted_places],
         next_cursor=page.next_cursor,
         has_more=page.has_more,
     )
 
 
-async def access_log(info: Info, limit: int | None = 100, offset: int | None = 0) -> list[AccessLogEntry]:
-    entries = await sync_to_async(backup.access_log)(caller(info), 100 if limit is None else limit, offset or 0)
+# --------------------------------------------------------------------------- reads
+
+
+async def day(info: Info, date: datetime.date, timezone: str | None = "UTC") -> Day:
+    d = await sync_to_async(reads.day)(caller(info).user, date, timezone or "UTC")
+    return Day(date=d.date, start=d.start, end=d.end, visits=d.visits, trips=d.trips, point_count=d.point_count, distance=d.distance)  # type: ignore[arg-type]
+
+
+async def route(
+    info: Info,
+    since: datetime.datetime,
+    until: datetime.datetime,
+    devices: list[strawberry.ID] | None = None,
+    simplify: Annotated[float | None, strawberry.argument(description="Tolerance in meters for thinning the line (none: every point).")] = None,
+    max_accuracy: Annotated[float | None, strawberry.argument(description="Leave out fixes less accurate than this (meters).")] = None,
+) -> list[Track]:
+    tracks = await sync_to_async(reads.route)(caller(info).user, since, until, [str(d) for d in devices] if devices else None, simplify, max_accuracy)
+    return [Track(device=t.device, start=t.start, end=t.end, point_count=t.point_count, distance=t.distance, geojson=t.geojson) for t in tracks]  # type: ignore[arg-type]
+
+
+async def stats(
+    info: Info,
+    since: datetime.datetime,
+    until: datetime.datetime,
+    granularity: enums.Granularity | None = enums.Granularity.DAY,
+    timezone: str | None = "UTC",
+) -> list[StatsBucket]:
+    buckets = await sync_to_async(reads.stats)(caller(info).user, since, until, (granularity or enums.Granularity.DAY).value, timezone or "UTC")
     return [
-        AccessLogEntry(id=strawberry.ID(str(e.pk)), operation=e.operation, range=e.range, rows=e.rows, at=e.at, device_id=e.device_id, client_id=e.client_id)
-        for e in entries
+        StatsBucket(
+            start=b.start,
+            point_count=b.point_count,
+            visit_count=b.visit_count,
+            trip_count=b.trip_count,
+            distance=b.distance,
+            by_mode=[ModeStat(mode=enums.TripMode(m.mode), trips=m.trips, distance=m.distance, seconds=m.seconds) for m in b.by_mode.values()],
+        )
+        for b in buckets
     ]
 
 
-async def retention(info: Info) -> Retention:
-    return Retention(days=await sync_to_async(backup.retention)(caller(info)))
+async def place_stats(info: Info, since: datetime.datetime | None = None, until: datetime.datetime | None = None, limit: int | None = 100) -> list[PlaceStat]:
+    rows = await sync_to_async(reads.place_stats)(caller(info).user, since, until, limit or 100)
+    return [
+        PlaceStat(place_client_id=strawberry.ID(r.place_client_id), place=r.place, visit_count=r.visit_count, seconds=r.seconds, first_visit_at=r.first_visit_at, last_visit_at=r.last_visit_at)  # type: ignore[arg-type]
+        for r in rows
+    ]
 
 
 # --------------------------------------------------------------------------- mutations
@@ -275,12 +263,8 @@ async def sync_places(info: Info, places: list[PlaceInput], deleted: list[Delete
     place_rows = [backup.PlaceIn(client_id=str(p.client_id), name=p.name, lat=p.lat, lon=p.lon, radius=p.radius, updated_at=p.updated_at) for p in places]
     deleted_rows = [backup.DeletedIn(client_id=str(d.client_id), deleted_at=d.deleted_at) for d in deleted]
     result = await sync_to_async(backup.sync_places)(caller(info), place_rows, deleted_rows)
-    return PlaceSyncResult(applied=result.applied, stale=[_place(p) for p in result.stale])
+    return PlaceSyncResult(applied=result.applied, stale=result.stale)  # type: ignore[arg-type]
 
 
 async def delete_server_copy(info: Info, confirm: str) -> int:
     return await sync_to_async(backup.delete_server_copy)(caller(info), confirm)
-
-
-async def set_retention(info: Info, days: int | None = None) -> Retention:
-    return Retention(days=await sync_to_async(backup.set_retention)(caller(info), days))
