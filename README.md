@@ -3,7 +3,7 @@
 An optional, self-hosted backup of a phone's location timeline, following the
 [Arkitekt](https://arkitekt.live) server patterns. The phone records and segments on its
 own; lokate holds a copy it can restore from. It is registered as `live.arkitekt.lokate`
-and has a python client, [`lokate`](https://github.com/jhnnsrs/lokate).
+and has a python client, [`lokate`](https://github.com/arkitektio/lokate).
 
 ## What it stores
 
@@ -25,6 +25,8 @@ to contain the partition key, so a point is unique on `(device, client_id, ts)`,
 timestamps.
 
 ## API
+
+GraphQL is served at `/graphql`, with the SDL at `/schema`.
 
 | Operation | What it does |
 | --- | --- |
@@ -50,6 +52,28 @@ Rules:
 - **Row values are stored as sent.** Only a batch the phone's own algorithm could never produce is refused: one that is too large, repeats a clientId, names no device, or has a segment before `from`. The phone retries a failed batch forever, so refusing a single point with a skewed clock would stall its backup for good.
 - **Nothing loops in this service.** Monthly partitions are created on demand by the first upload that needs them.
 
+## Hub integration
+
+Declared in [`lokate_server/contract.py`](lokate_server/contract.py):
+
+- **Scopes**: `lokate_read`, `lokate_write`.
+- **Needs**: tokens issued by lok, and nothing else of the hub. lokate has no instance key,
+  is not a rekuest service and offers no actions.
+
+## Running
+
+The image is `jhnnsrs/lokate`. It has no default command, and starting it takes two steps:
+
+```sh
+python -m arkitekt_service migrate   # wait for the database, migrate, ensureadmin
+bash run.sh                          # serve on :80 (daphne), and nothing else
+```
+
+`run-debug.sh` does both in one go with Django's autoreloading server, for development.
+
+It needs Postgres with PostGIS ([`jhnnsrs/daten`](https://github.com/arkitektio/daten-server))
+and Redis.
+
 ## Development
 
 ```sh
@@ -59,3 +83,11 @@ docker compose up      # a standalone dev stack on :8888
 ```
 
 See [CONFIG.md](CONFIG.md) for every configuration value.
+
+## Releases
+
+Releases are tags: a push to `main` cuts a stable version, a push to `next` a release
+candidate. Each one publishes `jhnnsrs/lokate` under its version (`X.Y.Z`, `X.Y`, `X`), plus
+`latest` from `main` and `next` from `next`. The `version` in `pyproject.toml` is a
+placeholder. Release notes are on
+[GitHub Releases](https://github.com/arkitektio/lokate-server/releases).
