@@ -65,11 +65,11 @@ Declared in [`lokate_server/contract.py`](lokate_server/contract.py):
 The image is `jhnnsrs/lokate`. It has no default command, and starting it takes two steps:
 
 ```sh
-python -m arkitekt_service migrate   # wait for the database, migrate, ensureadmin
-bash run.sh                          # serve on :80 (daphne), and nothing else
+arkitekt-service run migrate   # wait for the database, migrate, ensureadmin
+arkitekt-service serve                          # serve on :80 (daphne), and nothing else
 ```
 
-`run-debug.sh` does both in one go with Django's autoreloading server, for development.
+`arkitekt-service debug` does both in one go with Django's autoreloading server, for development.
 
 It needs Postgres with PostGIS ([`jhnnsrs/daten`](https://github.com/arkitektio/daten-server))
 and Redis.
