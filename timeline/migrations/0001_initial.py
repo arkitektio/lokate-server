@@ -112,15 +112,6 @@ class Migration(migrations.Migration):
             ],
         ),
         migrations.CreateModel(
-            name='Retention',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('days', models.PositiveIntegerField(blank=True, null=True)),
-                ('updated_at', models.DateTimeField(auto_now=True)),
-                ('user', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='lokate_retention', to=settings.AUTH_USER_MODEL)),
-            ],
-        ),
-        migrations.CreateModel(
             name='Trip',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
@@ -153,22 +144,6 @@ class Migration(migrations.Migration):
                 ('device', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='visits', to='timeline.device')),
                 ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='+', to=settings.AUTH_USER_MODEL)),
             ],
-        ),
-        migrations.CreateModel(
-            name='AccessLog',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('device_id', models.CharField(blank=True, help_text="The reading token's client_device claim.", max_length=2000, null=True)),
-                ('client_id', models.CharField(blank=True, help_text="The reading token's OAuth client.", max_length=2000, null=True)),
-                ('operation', models.CharField(max_length=100)),
-                ('range', models.CharField(blank=True, default='', help_text='What was read, e.g. a cursor span.', max_length=500)),
-                ('rows', models.IntegerField(default=0, help_text='How many rows the read returned.')),
-                ('at', models.DateTimeField(auto_now_add=True)),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='+', to=settings.AUTH_USER_MODEL)),
-            ],
-            options={
-                'indexes': [models.Index(fields=['user', '-at'], name='tl_accesslog_user_at')],
-            },
         ),
         migrations.AddConstraint(
             model_name='device',
