@@ -7,15 +7,27 @@ the same commit, and no installer has to learn of it.
 
 from __future__ import annotations
 
-from arkitekt_service.contract import JSON, Contract, Description, Facts, Job, Needs, Offers, Scope, Start, blocks
+from arkitekt_service.contract import JSON, Contract, Description, Facts, Job, Needs, Offers, Role, Scope, Start, blocks
 
 from lokate_server.configuration import Settings
 
-#: What a token may be allowed to do here: defined at the coordination server when the hub enrols.
+#: What an app may do here on a user's behalf: defined at the coordination server when the hub
+#: enrols. Every root field of the schema asks for one of them (`AuthExtension(scopes=...)`).
 SCOPES = [
-    Scope(key="lokate_read", description="Read your backed-up location timeline"),
-    Scope(key="lokate_write", description="Back up your location timeline"),
+    Scope(key="lokate_read", description="See your backed-up location timeline and places."),
+    Scope(key="lokate_write", description="Back up your location timeline and places, and delete the server's copy."),
+    Scope(key="lokate_all", description="Do everything in Lokate on your behalf.", is_all_scope=True),
 ]
+
+#: What a member of an organization may do here.
+ROLES = [
+    Role(key="lokate_admin", description="Full control of Lokate in this organization.", is_admin_role=True),
+    Role(key="lokate_editor", description="Back up location timelines.", is_default_role=True),
+]
+
+#: The role every write asks for.
+EDITOR = "lokate_editor"
+ADMIN = "lokate_admin"
 
 
 def render(facts: Facts) -> dict[str, JSON]:
@@ -29,7 +41,7 @@ contract = Contract(
         name="lokate",
         identifier="live.arkitekt.lokate",
         summary="A backup of your location timeline.",
-        needs=Needs(scopes=SCOPES, storage=["media"]),
+        needs=Needs(scopes=SCOPES, roles=ROLES, storage=["media"]),
         offers=Offers(),
     ),
     settings=Settings,

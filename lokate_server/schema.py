@@ -11,22 +11,25 @@ token's device (``client_device``). There is no admin or cross-user API.
 
 import strawberry
 import strawberry_django
+from authentikate.catch_alls import declare_catch_alls
 from authentikate.strawberry.directives import AuthExtension
 from authentikate.strawberry.extension import AuthentikateExtension
 from strawberry_django.optimizer import DjangoOptimizerExtension
 
+from lokate_server.contract import EDITOR, contract
 from lokate_server.logs import QuietErrorsSchema
 from timeline import backup, graphql, queries, types
 
 
-def field(**kwargs):  # noqa: ANN201
-    """A query field that requires authentication."""
-    return strawberry_django.field(extensions=[AuthExtension()], **kwargs)
+def field(scope: str = "lokate_read", **kwargs):  # noqa: ANN201
+    """A query field an app needs ``scope`` for (``lokate_read``, unless it says otherwise)."""
+    return strawberry_django.field(extensions=[AuthExtension(scopes=[scope])], **kwargs)
 
 
-def mutation(**kwargs):  # noqa: ANN201
-    """A mutation that requires authentication."""
-    return strawberry_django.mutation(extensions=[AuthExtension()], **kwargs)
+def mutation(scope: str = "lokate_write", roles: list[str] | None = None, **kwargs):  # noqa: ANN201
+    """A write: an app needs ``scope`` for it, a member one of ``roles`` (``lokate_editor`` unless it
+    says otherwise; ``lokate_admin`` holds every role)."""
+    return strawberry_django.mutation(extensions=[AuthExtension(scopes=[scope], any_role_of=roles or [EDITOR])], **kwargs)
 
 
 @strawberry.type
@@ -94,3 +97,8 @@ schema = Schema(
     mutation=Mutation,
     extensions=[DjangoOptimizerExtension, AuthentikateExtension],
 )
+
+# `lokate_all` passes every scope check and `lokate_admin` every role check. lokate has no hub
+# Service (no structures to annotate), so it tells authentikate itself rather than through
+# arkitekt_service.graphql.annotate_schema.
+declare_catch_alls(scope=contract.description.all_scope, role=contract.description.admin_role)

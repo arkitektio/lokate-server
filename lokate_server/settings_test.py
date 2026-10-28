@@ -19,17 +19,27 @@ DATABASES["default"] = {
 
 # Django forces DEBUG=False under the test runner, and authentikate refuses static tokens
 # when DEBUG is False. These are deliberate test fixtures, so opt in explicitly.
+#: What a test token is unless it says otherwise: lokate's admin, through an app granted all of lokate.
+ADMIN_WITH_EVERY_SCOPE = {"roles": ["lokate_admin"], "scope": "openid lokate_all"}
+
 AUTHENTIKATE = {
     **AUTHENTIKATE,
     "allow_static_tokens_in_production": True,
     "static_tokens": {
-        # One user, two phones: same sub, different client_device.
-        "phone-a": {"sub": "1", "client_device": "phone-a"},
-        "phone-b": {"sub": "1", "client_device": "phone-b"},
-        # Another user, on a phone that happens to report the same device id as phone-a.
-        "other": {"sub": "9", "client_device": "phone-a"},
-        # A token that names no device.
-        "nodevice": {"sub": "1", "client_device": ""},
+        name: {**ADMIN_WITH_EVERY_SCOPE, **token}
+        for name, token in {
+            # One user, two phones: same sub, different client_device.
+            "phone-a": {"sub": "1", "client_device": "phone-a"},
+            "phone-b": {"sub": "1", "client_device": "phone-b"},
+            # Another user, on a phone that happens to report the same device id as phone-a.
+            "other": {"sub": "9", "client_device": "phone-a"},
+            # A token that names no device.
+            "nodevice": {"sub": "1", "client_device": ""},
+            # phone-a through an app granted only what it reads, for the scope tests (tests/test_scopes.py).
+            "readertest": {"sub": "1", "client_device": "phone-a", "scope": "openid lokate_read"},
+            # phone-a's user holding only the default role, for the scope tests.
+            "editortest": {"sub": "1", "client_device": "phone-a", "roles": ["lokate_editor"]},
+        }.items()
     },
 }
 
