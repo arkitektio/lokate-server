@@ -11,6 +11,7 @@ token's device (``client_device``). There is no admin or cross-user API.
 
 import strawberry
 import strawberry_django
+from arkitekt_service.graphql import TelemetryExtension
 from authentikate.catch_alls import declare_catch_alls
 from authentikate.strawberry.directives import AuthExtension
 from authentikate.strawberry.extension import AuthentikateExtension
@@ -95,7 +96,7 @@ class Schema(QuietErrorsSchema, strawberry.federation.Schema):
 schema = Schema(
     query=Query,
     mutation=Mutation,
-    extensions=[DjangoOptimizerExtension, AuthentikateExtension],
+    extensions=[TelemetryExtension, DjangoOptimizerExtension, AuthentikateExtension],
 )
 
 # `lokate_all` passes every scope check and `lokate_admin` every role check. lokate has no hub
