@@ -16,10 +16,11 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.views.decorators.csrf import csrf_exempt
+from arkitekt_service.service.views import answers_challenge
 from health_check.views import MainView
 from kante.path import dynamicpath
 
 urlpatterns = [
     dynamicpath("admin/", admin.site.urls),
-    dynamicpath("ht",  csrf_exempt(MainView.as_view()), name="health_check"),
+    dynamicpath("ht", answers_challenge(csrf_exempt(MainView.as_view())), name="health_check"),
 ]
