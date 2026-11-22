@@ -1,0 +1,78 @@
+{
+    "files": {
+        "./lokate_server/asgi.py": [
+            {
+                "code": "reportArgumentType",
+                "range": {
+                    "startColumn": 4,
+                    "endColumn": 5,
+                    "lineCount": 5
+                }
+            }
+        ],
+        "./tests/test_config.py": [
+            {
+                "code": "reportCallIssue",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportCallIssue",
+                "range": {
+                    "startColumn": 11,
+                    "endColumn": 21,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_reads.py": [
+            {
+                "code": "reportArgumentType",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 12,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportArgumentType",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 12,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./timeline/geo.py": [
+            {
+                "code": "reportAssignmentType",
+                "range": {
+                    "startColumn": 19,
+                    "endColumn": 39,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./timeline/models.py": [
+            {
+                "code": "reportAssignmentType",
+                "range": {
+                    "startColumn": 19,
+                    "endColumn": 43,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportAttributeAccessIssue",
+                "range": {
+                    "startColumn": 43,
+                    "endColumn": 50,
+                    "lineCount": 1
+                }
+            }
+        ]
+    }
+}
