@@ -2,12 +2,15 @@
 
 import datetime
 import threading
+from collections.abc import Callable
+from typing import TypeVar
 
 import pytest
 from asgiref.sync import sync_to_async
 from authentikate.models import User
 from django.db import connection, connections
 
+from tests.runner import Run, code, first_error
 from timeline import backup
 from timeline.identity import Caller
 
@@ -121,7 +124,7 @@ async def stamps(table: str) -> list[tuple]:
     return await sql(f"SELECT client_id, received_at FROM {table} ORDER BY client_id")
 
 
-async def page_all(run, token: str = "phone-a", limit: int = 1000) -> list[dict]:
+async def page_all(run: Run, token: str = "phone-a", limit: int = 1000) -> list[dict]:
     pages, cursor = [], None
     while True:
         page = (await run(CHANGES, {"cursor": cursor, "limit": limit}, token=token))[
@@ -136,7 +139,7 @@ async def page_all(run, token: str = "phone-a", limit: int = 1000) -> list[dict]
 # --------------------------------------------------------------------------- points
 
 
-async def test_a_retried_point_batch_changes_nothing(run):
+async def test_a_retried_point_batch_changes_nothing(run: Run) -> None:
     batch = points(50)
     assert (await run(UPLOAD, {"points": batch}))["uploadPoints"] == {
         "accepted": 50,
@@ -157,17 +160,17 @@ async def test_a_retried_point_batch_changes_nothing(run):
     }
 
 
-async def test_batches_over_1000_are_refused(run):
+async def test_batches_over_1000_are_refused(run: Run) -> None:
     result = await run(UPLOAD, {"points": points(1001)}, errors=True)
-    assert result.errors[0].extensions["code"] == "BATCH_TOO_LARGE"
-    assert "1000" in result.errors[0].message
+    assert code(result) == "BATCH_TOO_LARGE"
+    assert "1000" in first_error(result).message
     assert await stamps("timeline_point") == []
 
     ok = await run(UPLOAD, {"points": points(1000)})
     assert ok["uploadPoints"]["accepted"] == 1000
 
 
-async def test_points_land_in_monthly_partitions(run):
+async def test_points_land_in_monthly_partitions(run: Run) -> None:
     batch = [
         {"clientId": "aug", "ts": "2026-08-31T23:59:59+00:00", "lat": 1.0, "lon": 2.0},
         {"clientId": "sep", "ts": "2026-09-01T00:00:00+00:00", "lat": 1.0, "lon": 2.0},
@@ -184,7 +187,7 @@ async def test_points_land_in_monthly_partitions(run):
     ]
 
 
-async def test_a_skewed_clock_does_not_stall_the_batch(run):
+async def test_a_skewed_clock_does_not_stall_the_batch(run: Run) -> None:
     """The phone retries a failed batch forever, so one odd point must not fail the rest."""
     batch = points(5) + [
         {
@@ -219,12 +222,12 @@ async def test_a_skewed_clock_does_not_stall_the_batch(run):
     )
 
 
-async def test_writes_need_a_device(run):
+async def test_writes_need_a_device(run: Run) -> None:
     result = await run(UPLOAD, {"points": points(1)}, token="nodevice", errors=True)
-    assert result.errors[0].extensions["code"] == "NO_DEVICE"
+    assert code(result) == "NO_DEVICE"
 
 
-async def test_sync_state_is_the_calling_devices(run):
+async def test_sync_state_is_the_calling_devices(run: Run) -> None:
     await run(UPLOAD, {"points": points(3)})
     await run(UPLOAD, {"points": points(7, prefix="b")}, token="phone-b")
     await run(REPLACE, {"from": iso(0), "visits": [visit("v1", 1, 2)], "trips": []})
@@ -247,7 +250,7 @@ async def test_sync_state_is_the_calling_devices(run):
 # --------------------------------------------------------------------------- segments
 
 
-async def test_replace_segments_only_touches_the_calling_devices_rows(run):
+async def test_replace_segments_only_touches_the_calling_devices_rows(run: Run) -> None:
     await run(
         REPLACE,
         {
@@ -292,7 +295,7 @@ async def test_replace_segments_only_touches_the_calling_devices_rows(run):
     assert await sql("SELECT count(*) FROM timeline_trip") == [(2,)]
 
 
-async def test_a_retried_replace_changes_nothing(run):
+async def test_a_retried_replace_changes_nothing(run: Run) -> None:
     variables = {
         "from": iso(0),
         "visits": [visit("v1", 0, 10, "home"), visit("v2", 20, 30)],
@@ -313,20 +316,20 @@ async def test_a_retried_replace_changes_nothing(run):
     assert after["v2"] > dict(before[0])["v2"]
 
 
-async def test_replace_refuses_segments_before_from(run):
+async def test_replace_refuses_segments_before_from(run: Run) -> None:
     result = await run(
         REPLACE,
         {"from": iso(15), "visits": [visit("v1", 0, 10)], "trips": []},
         errors=True,
     )
-    assert "before `from`" in result.errors[0].message
+    assert "before `from`" in first_error(result).message
     assert await stamps("timeline_visit") == []
 
 
 # --------------------------------------------------------------------------- places
 
 
-async def test_places_last_write_wins(run):
+async def test_places_last_write_wins(run: Run) -> None:
     await run(SYNC_PLACES, {"places": [place("home", "Home", 10)], "deleted": []})
 
     # Phone B holds an older edit: it loses and is handed the server's copy.
@@ -385,7 +388,7 @@ async def test_places_last_write_wins(run):
     assert await stamps("timeline_place") == before
 
 
-async def test_a_tombstone_beats_an_older_update(run):
+async def test_a_tombstone_beats_an_older_update(run: Run) -> None:
     await run(SYNC_PLACES, {"places": [place("gym", "Gym", 10)], "deleted": []})
     deleted = (
         await run(
@@ -430,7 +433,7 @@ async def test_a_tombstone_beats_an_older_update(run):
     assert await stamps("timeline_place") == before
 
 
-async def test_a_tombstone_loses_to_a_newer_update(run):
+async def test_a_tombstone_loses_to_a_newer_update(run: Run) -> None:
     await run(SYNC_PLACES, {"places": [place("cafe", "Cafe", 30)], "deleted": []})
     result = (
         await run(
@@ -445,7 +448,7 @@ async def test_a_tombstone_loses_to_a_newer_update(run):
     ]
 
 
-async def test_a_tombstone_for_an_unknown_place_is_kept(run):
+async def test_a_tombstone_for_an_unknown_place_is_kept(run: Run) -> None:
     result = (
         await run(
             SYNC_PLACES,
@@ -472,7 +475,7 @@ async def test_a_tombstone_for_an_unknown_place_is_kept(run):
 # --------------------------------------------------------------------------- changes
 
 
-async def test_changes_pages_through_everything_exactly_once(run):
+async def test_changes_pages_through_everything_exactly_once(run: Run) -> None:
     await run(UPLOAD, {"points": points(23)})
     await run(UPLOAD, {"points": points(11, prefix="b")}, token="phone-b")
     await run(
@@ -535,18 +538,19 @@ async def test_changes_pages_through_everything_exactly_once(run):
     assert [p["clientId"] for p in later["points"]] == ["p100"]
 
 
-async def test_changes_limit_and_cursor_are_checked(run):
-    assert (await run(CHANGES, {"limit": 1001}, errors=True)).errors[0].extensions[
-        "code"
-    ] == "BATCH_TOO_LARGE"
-    assert (await run(CHANGES, {"cursor": "nope"}, errors=True)).errors[0].extensions[
-        "code"
-    ] == "INVALID_CURSOR"
+async def test_changes_limit_and_cursor_are_checked(run: Run) -> None:
+    assert code(await run(CHANGES, {"limit": 1001}, errors=True)) == "BATCH_TOO_LARGE"
+    assert code(await run(CHANGES, {"cursor": "nope"}, errors=True)) == "INVALID_CURSOR"
 
 
-def _in_thread(fn):  # noqa: ANN001, ANN202
+_T = TypeVar("_T")
+
+
+def _in_thread(
+    fn: Callable[[], _T],
+) -> tuple[threading.Thread, list[_T], list[BaseException]]:
     """Run ``fn`` on its own thread (so its own connection); returns (thread, results, errors)."""
-    results: list = []
+    results: list[_T] = []
     errors: list[BaseException] = []
 
     def target() -> None:
@@ -570,7 +574,9 @@ def _waiting_on_advisory_lock() -> bool:
         return cursor.fetchone()[0] > 0
 
 
-def test_changes_skips_nothing_when_writers_commit_out_of_order(transactional_db):
+def test_changes_skips_nothing_when_writers_commit_out_of_order(
+    transactional_db: None,
+) -> None:
     """A stamp drawn first must never commit after a reader has paged past a later one.
 
     Phone A draws its stamps and stays uncommitted; phone B (same user) writes meanwhile; a
@@ -640,7 +646,9 @@ def test_changes_skips_nothing_when_writers_commit_out_of_order(transactional_db
 DELETE = "mutation Delete($confirm: String!) { deleteServerCopy(confirm: $confirm) }"
 
 
-async def test_delete_server_copy_needs_confirmation_and_spares_other_users(run):
+async def test_delete_server_copy_needs_confirmation_and_spares_other_users(
+    run: Run,
+) -> None:
     await run(UPLOAD, {"points": points(4)})
     await run(UPLOAD, {"points": points(2, prefix="b")}, token="phone-b")
     await run(
@@ -651,7 +659,7 @@ async def test_delete_server_copy_needs_confirmation_and_spares_other_users(run)
     await run(UPLOAD, {"points": points(3)}, token="other")
 
     refused = await run(DELETE, {"confirm": "yes"}, errors=True)
-    assert refused.errors[0].extensions["code"] == "CONFIRMATION_REQUIRED"
+    assert code(refused) == "CONFIRMATION_REQUIRED"
 
     assert (await run(DELETE, {"confirm": "DELETE"}))[
         "deleteServerCopy"

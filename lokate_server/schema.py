@@ -9,6 +9,8 @@ Every field acts as the token's user and only ever sees that user's rows; every 
 token's device (``client_device``). There is no admin or cross-user API.
 """
 
+from typing import Any
+
 import strawberry
 import strawberry_django
 from arkitekt_service.graphql import TelemetryExtension
@@ -22,12 +24,14 @@ from lokate_server.logs import QuietErrorsSchema
 from timeline import backup, graphql, queries, types
 
 
-def field(scope: str = "lokate_read", **kwargs):  # noqa: ANN201
+def field(scope: str = "lokate_read", **kwargs: Any) -> Any:  # noqa: ANN401 - as strawberry_django.field: the value of `x: T = field()`
     """A query field an app needs ``scope`` for (``lokate_read``, unless it says otherwise)."""
     return strawberry_django.field(extensions=[AuthExtension(scopes=[scope])], **kwargs)
 
 
-def mutation(scope: str = "lokate_write", roles: list[str] | None = None, **kwargs):  # noqa: ANN201
+def mutation(
+    scope: str = "lokate_write", roles: list[str] | None = None, **kwargs: Any
+) -> Any:  # noqa: ANN401 - as strawberry_django.mutation: the value of `x: T = mutation()`
     """A write: an app needs ``scope`` for it, a member one of ``roles`` (``lokate_editor`` unless it
     says otherwise; ``lokate_admin`` holds every role)."""
     return strawberry_django.mutation(

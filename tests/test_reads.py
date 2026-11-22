@@ -9,6 +9,8 @@ import json
 
 import pytest
 
+from tests.runner import Run, code
+
 pytestmark = pytest.mark.django_db(transaction=True)
 
 UPLOAD = (
@@ -58,7 +60,7 @@ def visit(
 
 
 @pytest.fixture
-async def seeded(run):
+async def seeded(run: Run) -> None:
     await run(UPLOAD, {"points": walk("a")})
     await run(UPLOAD, {"points": walk("b", n=3, start=200)}, token="phone-b")
     await run(UPLOAD, {"points": walk("x")}, token="other")
@@ -148,7 +150,7 @@ async def seeded(run):
     )
 
 
-async def test_points_are_the_callers_from_all_devices(run, seeded):
+async def test_points_are_the_callers_from_all_devices(run: Run, seeded: None) -> None:
     data = await run(
         "query { points(ordering: [{ts: ASC}]) { clientId deviceId device { deviceId } } pointsCount }"
     )
@@ -163,7 +165,7 @@ async def test_points_are_the_callers_from_all_devices(run, seeded):
     assert (await run("query { pointsCount }", token="other"))["pointsCount"] == 11
 
 
-async def test_point_filters(run, seeded):
+async def test_point_filters(run: Run, seeded: None) -> None:
     q = "query Q($f: PointFilter, $p: OffsetPaginationInput) { points(filters: $f, pagination: $p, ordering: [{ts: DESC}]) { clientId } pointsCount(filters: $f) }"
     window = await run(q, {"f": {"since": iso(32), "until": iso(35)}})
     assert [p["clientId"] for p in window["points"]] == ["a4", "a3", "a2"] and window[
@@ -213,7 +215,7 @@ async def test_point_filters(run, seeded):
     assert [p["clientId"] for p in page["points"]] == ["b0", "a10"]
 
 
-async def test_single_fetches_are_scoped(run, seeded):
+async def test_single_fetches_are_scoped(run: Run, seeded: None) -> None:
     point_id = (await run("query { points(pagination: {limit: 1}) { id } }"))["points"][
         0
     ]["id"]
@@ -229,7 +231,7 @@ async def test_single_fetches_are_scoped(run, seeded):
     assert theirs.errors and theirs.data is None
 
 
-async def test_visits_trips_and_places(run, seeded):
+async def test_visits_trips_and_places(run: Run, seeded: None) -> None:
     visits = await run(
         """query { visits(ordering: [{start: ASC}]) { clientId duration placeClientId place { name } }
                        matched: visitsCount(filters: {places: ["work"]})
@@ -274,7 +276,7 @@ async def test_visits_trips_and_places(run, seeded):
     assert near["places"] == [{"clientId": "work"}]
 
 
-async def test_day_in_a_time_zone(run, seeded):
+async def test_day_in_a_time_zone(run: Run, seeded: None) -> None:
     day = (
         await run(
             'query { day(date: "2026-08-30", timezone: "Europe/Vienna") { start end visits { clientId } trips { clientId deviceId } pointCount distance } }'
@@ -295,14 +297,17 @@ async def test_day_in_a_time_zone(run, seeded):
     )["day"]
     assert empty == {"visits": [], "pointCount": 0}
     assert (
-        await run(
-            'query { day(date: "2026-08-30", timezone: "Mars/Olympus") { pointCount } }',
-            errors=True,
+        code(
+            await run(
+                'query { day(date: "2026-08-30", timezone: "Mars/Olympus") { pointCount } }',
+                errors=True,
+            )
         )
-    ).errors[0].extensions["code"] == "INVALID_TIMEZONE"
+        == "INVALID_TIMEZONE"
+    )
 
 
-async def test_route_is_a_line_per_device(run, seeded):
+async def test_route_is_a_line_per_device(run: Run, seeded: None) -> None:
     q = "query Q($s: DateTime!, $u: DateTime!, $simplify: Float) { route(since: $s, until: $u, simplify: $simplify) { device { deviceId } pointCount distance geojson start end } }"
     tracks = (await run(q, {"s": iso(0), "u": iso(300)}))["route"]
     assert [(t["device"]["deviceId"], t["pointCount"]) for t in tracks] == [
@@ -322,7 +327,7 @@ async def test_route_is_a_line_per_device(run, seeded):
     assert (await run(q, {"s": iso(10), "u": iso(0)}, errors=True)).errors
 
 
-async def test_stats_per_bucket_and_per_place(run, seeded):
+async def test_stats_per_bucket_and_per_place(run: Run, seeded: None) -> None:
     buckets = (
         await run(
             "query Q($s: DateTime!, $u: DateTime!) { stats(since: $s, until: $u, granularity: DAY) { start pointCount visitCount tripCount distance byMode { mode trips distance seconds } } }",
@@ -353,9 +358,9 @@ async def test_stats_per_bucket_and_per_place(run, seeded):
     ]
 
 
-async def test_reads_need_a_token(run, seeded):
+async def test_reads_need_a_token(run: Run, seeded: None) -> None:
     from lokate_server.schema import schema
-    from tests.conftest import context
+    from tests.runner import context
 
     ctx = context("nope")
     ctx.headers = {}
@@ -363,7 +368,9 @@ async def test_reads_need_a_token(run, seeded):
     assert result.errors
 
 
-async def test_place_visit_stats_and_visit_places_in_one_answer(run, seeded):
+async def test_place_visit_stats_and_visit_places_in_one_answer(
+    run: Run, seeded: None
+) -> None:
     # A second stay at work, and one at a place that was deleted: the list's counts are each
     # place's own, and a visit's place is its live place or null.
     await run(
@@ -416,7 +423,7 @@ async def test_place_visit_stats_and_visit_places_in_one_answer(run, seeded):
     assert theirs["visits"] == [{"clientId": "v-x", "place": {"name": "Their home"}}]
 
 
-async def test_stats_count_points_only_when_asked(run, seeded):
+async def test_stats_count_points_only_when_asked(run: Run, seeded: None) -> None:
     from asgiref.sync import sync_to_async
     from authentikate.models import User
 
@@ -446,7 +453,7 @@ async def test_stats_count_points_only_when_asked(run, seeded):
     assert counted.point_count > 0
 
 
-async def test_place_stats_rank_and_limit(run, seeded):
+async def test_place_stats_rank_and_limit(run: Run, seeded: None) -> None:
     await run(
         REPLACE,
         {

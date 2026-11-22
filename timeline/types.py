@@ -6,20 +6,26 @@ from any of their devices. Tombstoned places are sync bookkeeping and never list
 """
 
 import datetime
+from typing import TypeVar
 
 import kante
 import strawberry
 import strawberry_django
+from django.db.models import Model, QuerySet
 from kante.types import Info
 
 from timeline import enums, filters, loaders, models
+
+_M = TypeVar("_M", bound=Model)
 
 
 class UserScoped:
     """Mixin: only the calling user's rows."""
 
     @classmethod
-    def get_queryset(cls, queryset, info: Info, **kwargs):  # noqa: ANN001, ANN206
+    def get_queryset(
+        cls, queryset: QuerySet[_M], info: Info, **kwargs: object
+    ) -> QuerySet[_M]:
         return queryset.filter(user=info.context.request.user)
 
 
@@ -95,7 +101,9 @@ class Place(UserScoped):
     )
 
     @classmethod
-    def get_queryset(cls, queryset, info: Info, **kwargs):  # noqa: ANN001, ANN206
+    def get_queryset(
+        cls, queryset: QuerySet[_M], info: Info, **kwargs: object
+    ) -> QuerySet[_M]:
         return super().get_queryset(queryset, info, **kwargs).filter(deleted_at=None)
 
     @strawberry_django.field(

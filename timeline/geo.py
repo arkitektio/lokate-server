@@ -7,10 +7,11 @@ geometry.
 """
 
 import math
-from typing import Any
 
 from django.db import models
+from django.db.backends.base.base import BaseDatabaseWrapper
 from django.db.models import Func
+from django.db.models.sql.compiler import SQLCompiler
 
 
 class GeometryPointField(models.Field):
@@ -18,10 +19,10 @@ class GeometryPointField(models.Field):
 
     description = "A WGS84 point (PostGIS geometry)"
 
-    def db_type(self, connection: Any) -> str:
+    def db_type(self, connection: BaseDatabaseWrapper) -> str:
         return "geometry(Point,4326)"
 
-    def rel_db_type(self, connection: Any) -> str:
+    def rel_db_type(self, connection: BaseDatabaseWrapper) -> str:
         return self.db_type(connection)
 
 
@@ -43,7 +44,9 @@ class InBox(models.Lookup):
     lookup_name = "in_box"
     prepare_rhs = False
 
-    def as_sql(self, compiler: Any, connection: Any) -> tuple[str, list]:
+    def as_sql(
+        self, compiler: SQLCompiler, connection: BaseDatabaseWrapper
+    ) -> tuple[str, list]:
         lhs, params = self.process_lhs(compiler, connection)
         south, west, north, east = (float(v) for v in self.rhs)
         return f"{lhs} && ST_MakeEnvelope(%s, %s, %s, %s, 4326)", [
@@ -66,7 +69,9 @@ class Near(models.Lookup):
     lookup_name = "near"
     prepare_rhs = False
 
-    def as_sql(self, compiler: Any, connection: Any) -> tuple[str, list]:
+    def as_sql(
+        self, compiler: SQLCompiler, connection: BaseDatabaseWrapper
+    ) -> tuple[str, list]:
         lhs, params = self.process_lhs(compiler, connection)
         lat, lon, meters = (float(v) for v in self.rhs)
         degrees = meters / (111_320 * max(math.cos(math.radians(lat)), 0.01))

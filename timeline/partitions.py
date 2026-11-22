@@ -10,6 +10,7 @@ check is a plain catalog read, so the common case (the month exists) takes no lo
 import datetime
 
 from django.db import connection, transaction
+from django.db.backends.utils import CursorWrapper
 
 #: The advisory lock key (two-int form) serialising partition DDL across replicas.
 PARTITION_LOCK = (0x6C6F, 1)
@@ -32,7 +33,7 @@ def partition_name(day: datetime.date) -> str:
     return f"timeline_point_y{day.year:04d}m{day.month:02d}"
 
 
-def _exists(cursor, name: str) -> bool:  # noqa: ANN001
+def _exists(cursor: CursorWrapper, name: str) -> bool:
     cursor.execute(
         "SELECT 1 FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid WHERE i.inhparent = 'timeline_point'::regclass AND c.relname = %s",
         [name],

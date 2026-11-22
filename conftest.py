@@ -5,27 +5,29 @@ A *root* conftest, so every database test in the repository gets it, not only th
 """
 
 import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import psycopg
 import pytest
 from dokker import testing
+from pytest_django import DjangoDbBlocker
 
 
-def _wait(check, what: str, timeout: float = 90) -> None:  # noqa: ANN001
+def _wait(check: Callable[[], None], what: str, timeout: float = 90) -> None:
     deadline = time.monotonic() + timeout
     while True:
         try:
             check()
             return
-        except Exception:
+        except Exception as error:
             if time.monotonic() >= deadline:
-                raise RuntimeError(f"{what} did not come up in {timeout}s")
+                raise RuntimeError(f"{what} did not come up in {timeout}s") from error
             time.sleep(0.2)
 
 
 @pytest.fixture(scope="session")
-def backend_stack():
+def backend_stack() -> Iterator[int]:
     """Bring up postgres and yield the host port docker gave it.
 
     No host port is pinned: dokker mints a unique project per run and docker picks a free
@@ -54,7 +56,7 @@ def backend_stack():
 
 
 @pytest.fixture(scope="session")
-def django_db_modify_db_settings(backend_stack):
+def django_db_modify_db_settings(backend_stack: int) -> Iterator[None]:
     """Point Django at the stack's postgres before pytest-django creates the test database."""
     from django.conf import settings
 
@@ -63,7 +65,9 @@ def django_db_modify_db_settings(backend_stack):
 
 
 @pytest.fixture(scope="session")
-def django_db_setup(django_db_setup, django_db_blocker):
+def django_db_setup(
+    django_db_setup: None, django_db_blocker: DjangoDbBlocker
+) -> Iterator[None]:
     """Kill the connections of asgiref's executor threads before the test database is dropped."""
     yield
     from django.db import connections

@@ -22,6 +22,7 @@ Rules they keep:
 import datetime
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -512,7 +513,7 @@ SELECT kind, received_at, data FROM (
 _TIME_KEYS = ("ts", "start", "end", "updated_at", "deleted_at")
 
 
-def _row(data: Any) -> dict[str, Any]:
+def _row(data: str | Mapping[str, Any]) -> dict[str, Any]:
     row = json.loads(data) if isinstance(data, str) else dict(data)
     for key in _TIME_KEYS:
         if row.get(key) is not None:

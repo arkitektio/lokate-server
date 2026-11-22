@@ -81,7 +81,8 @@ def visit_stats(info: Info) -> DataLoader[PlaceKey, VisitStats]:
     )
     if loader is None:
         loader = DataLoader(load_fn=_load_visit_stats, cache=False)
-        info.context._lokate_visit_stats = loader
+        # kante's contexts declare no attribute for a request-scoped loader.
+        setattr(info.context, "_lokate_visit_stats", loader)  # noqa: B010
     return loader
 
 
@@ -92,5 +93,5 @@ def places(info: Info) -> DataLoader[PlaceKey, models.Place | None]:
     )
     if loader is None:
         loader = DataLoader(load_fn=_load_places, cache=False)
-        info.context._lokate_places = loader
+        setattr(info.context, "_lokate_places", loader)  # noqa: B010 - as above
     return loader

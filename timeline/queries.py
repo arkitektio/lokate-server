@@ -1,18 +1,31 @@
 """Single fetches and counts over the caller's rows (see types.py for the scoping)."""
 
+from typing import TypeVar, cast
+
 import strawberry
 import strawberry_django
+from django.db.models import Model
 from kante.types import Info
 
 from timeline import filters, models, types
 from timeline.identity import caller
 
-
-def _get(model, type_, info: Info, id: strawberry.ID):  # noqa: ANN001, ANN202
-    return type_.get_queryset(model.objects.all(), info).get(pk=id)
+_Type = TypeVar("_Type", bound=types.UserScoped)
 
 
-def _count(model, type_, info: Info, where) -> int:  # noqa: ANN001
+def _get(
+    model: type[Model], type_: type[_Type], info: Info, id: strawberry.ID
+) -> _Type:
+    # A resolver hands strawberry_django the row; the type is resolved from it.
+    return cast(_Type, type_.get_queryset(model.objects.all(), info).get(pk=id))
+
+
+def _count(
+    model: type[Model],
+    type_: type[types.UserScoped],
+    info: Info,
+    where: object | None,
+) -> int:
     rows = type_.get_queryset(model.objects.all(), info)
     if where is not None:
         rows = strawberry_django.filters.apply(where, rows, info)
