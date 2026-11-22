@@ -12,7 +12,7 @@ import strawberry
 import strawberry_django
 from kante.types import Info
 
-from timeline import enums, filters, models
+from timeline import enums, filters, loaders, models
 
 
 class UserScoped:
@@ -69,14 +69,15 @@ class Place(UserScoped):
     def get_queryset(cls, queryset, info: Info, **kwargs):  # noqa: ANN001, ANN206
         return super().get_queryset(queryset, info, **kwargs).filter(deleted_at=None)
 
-    @strawberry_django.field(description="How many visits were matched to it.")
-    def visit_count(self) -> int:
-        return models.Visit.objects.filter(user_id=self.user_id, place_client_id=self.client_id).count()  # type: ignore[attr-defined]
+    @strawberry_django.field(description="How many visits were matched to it.", only=["user_id", "client_id"])
+    async def visit_count(self, info: Info) -> int:
+        stats = await loaders.visit_stats(info).load((self.user_id, self.client_id))  # type: ignore[attr-defined]
+        return stats.count
 
-    @strawberry_django.field(description="When the latest visit to it ended.")
-    def last_visit_at(self) -> datetime.datetime | None:
-        visit = models.Visit.objects.filter(user_id=self.user_id, place_client_id=self.client_id).order_by("-end").first()  # type: ignore[attr-defined]
-        return visit.end if visit else None
+    @strawberry_django.field(description="When the latest visit to it ended.", only=["user_id", "client_id"])
+    async def last_visit_at(self, info: Info) -> datetime.datetime | None:
+        stats = await loaders.visit_stats(info).load((self.user_id, self.client_id))  # type: ignore[attr-defined]
+        return stats.last_end
 
 
 @kante.django_type(models.Visit, pagination=True, filters=filters.VisitFilter, ordering=filters.VisitOrder, description="A stay at one spot.")
@@ -100,11 +101,11 @@ class Visit(UserScoped):
     def duration(self) -> float:
         return (self.end - self.start).total_seconds()  # type: ignore[attr-defined]
 
-    @strawberry_django.field(description="The place it was matched to (none if deleted or unmatched).")
-    def place(self) -> Place | None:
+    @strawberry_django.field(description="The place it was matched to (none if deleted or unmatched).", only=["user_id", "place_client_id"])
+    async def place(self, info: Info) -> Place | None:
         if not self.place_client_id:  # type: ignore[attr-defined]
             return None
-        return models.Place.objects.filter(user_id=self.user_id, client_id=self.place_client_id, deleted_at=None).first()  # type: ignore[attr-defined,return-value]
+        return await loaders.places(info).load((self.user_id, self.place_client_id))  # type: ignore[attr-defined,return-value]
 
 
 @kante.django_type(models.Trip, pagination=True, filters=filters.TripFilter, ordering=filters.TripOrder, description="A movement between two visits.")

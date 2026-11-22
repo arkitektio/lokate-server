@@ -111,6 +111,7 @@ class Visit(models.Model):
         indexes = [
             models.Index(fields=["user", "received_at"], name="tl_visit_user_stamp"),
             models.Index(fields=["device", "start"], name="tl_visit_device_start"),
+            models.Index(fields=["user", "place_client_id"], name="tl_visit_user_place"),
             GistIndex(fields=["geom"], name="tl_visit_geom"),
         ]
 

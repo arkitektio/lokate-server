@@ -11,6 +11,7 @@ from typing import Annotated
 import strawberry
 from asgiref.sync import sync_to_async
 from kante.types import Info
+from strawberry.types.nodes import SelectedField, Selection
 
 from timeline import backup, enums, reads, types
 from timeline.identity import caller
@@ -43,6 +44,7 @@ class ReplaceResult:
 class PlaceSyncResult:
     applied: int
     stale: list[types.Place] = strawberry.field(description="Places whose server copy is newer; the phone takes them (deletedAt set: delete it).")
+    places: list[types.Place] = strawberry.field(description="The server's copy of every place sent, after the merge (ones a tombstone kept deleted left out).")
 
 
 @strawberry.type(description="One page of everything the user has, from all their devices, in change order.")
@@ -186,6 +188,17 @@ async def changes(info: Info, cursor: str | None = None, limit: int | None = bac
 # --------------------------------------------------------------------------- reads
 
 
+def _asks_for(selections: list[Selection], name: str) -> bool:
+    """Whether ``name`` is among ``selections``, looking through fragments."""
+    for selection in selections:
+        if isinstance(selection, SelectedField):
+            if selection.name == name:
+                return True
+        elif _asks_for(selection.selections, name):
+            return True
+    return False
+
+
 async def day(info: Info, date: datetime.date, timezone: str | None = "UTC") -> Day:
     d = await sync_to_async(reads.day)(caller(info).user, date, timezone or "UTC")
     return Day(date=d.date, start=d.start, end=d.end, visits=d.visits, trips=d.trips, point_count=d.point_count, distance=d.distance)  # type: ignore[arg-type]
@@ -210,7 +223,8 @@ async def stats(
     granularity: enums.Granularity | None = enums.Granularity.DAY,
     timezone: str | None = "UTC",
 ) -> list[StatsBucket]:
-    buckets = await sync_to_async(reads.stats)(caller(info).user, since, until, (granularity or enums.Granularity.DAY).value, timezone or "UTC")
+    count_points = any(_asks_for(field.selections, "pointCount") for field in info.selected_fields)
+    buckets = await sync_to_async(reads.stats)(caller(info).user, since, until, (granularity or enums.Granularity.DAY).value, timezone or "UTC", count_points)
     return [
         StatsBucket(
             start=b.start,
@@ -263,7 +277,7 @@ async def sync_places(info: Info, places: list[PlaceInput], deleted: list[Delete
     place_rows = [backup.PlaceIn(client_id=str(p.client_id), name=p.name, lat=p.lat, lon=p.lon, radius=p.radius, updated_at=p.updated_at) for p in places]
     deleted_rows = [backup.DeletedIn(client_id=str(d.client_id), deleted_at=d.deleted_at) for d in deleted]
     result = await sync_to_async(backup.sync_places)(caller(info), place_rows, deleted_rows)
-    return PlaceSyncResult(applied=result.applied, stale=result.stale)  # type: ignore[arg-type]
+    return PlaceSyncResult(applied=result.applied, stale=result.stale, places=result.places)  # type: ignore[arg-type]
 
 
 async def delete_server_copy(info: Info, confirm: str) -> int:

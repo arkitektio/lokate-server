@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 
 from authentikate.models import User
 from django.db import connection
-from django.db.models import Q
+from django.db.models import Count, F, Max, Min, Q, Sum
 
 from timeline import models
 from timeline.backup import invalid
@@ -117,10 +117,12 @@ class Bucket:
     by_mode: dict[str, ModeStat] = field(default_factory=dict)
 
 
-def stats(user: User, since: datetime.datetime, until: datetime.datetime, granularity: str = "day", timezone: str = "UTC") -> list[Bucket]:
+def stats(user: User, since: datetime.datetime, until: datetime.datetime, granularity: str = "day", timezone: str = "UTC", count_points: bool = True) -> list[Bucket]:
     """Counts and distances per day, week or month (in ``timezone``); empty buckets left out.
 
-    Visits and trips count in the bucket they start in.
+    Visits and trips count in the bucket they start in. Counting the points reads every raw
+    point in the range, by far the costliest part over a year: ``count_points=False`` skips
+    it (``point_count`` stays 0), for a caller that does not ask for it.
     """
     _span(since, until)
     zone(timezone)
@@ -133,12 +135,13 @@ def stats(user: User, since: datetime.datetime, until: datetime.datetime, granul
 
     trunc = "date_trunc(%s, {col} AT TIME ZONE %s) AT TIME ZONE %s"
     with connection.cursor() as cursor:
-        cursor.execute(
-            f"SELECT {trunc.format(col='ts')} AS b, count(*) FROM timeline_point WHERE user_id = %s AND ts >= %s AND ts < %s GROUP BY b",
-            [granularity, timezone, timezone, user.pk, since, until],
-        )
-        for start, n in cursor.fetchall():
-            bucket(start).point_count = n
+        if count_points:
+            cursor.execute(
+                f"SELECT {trunc.format(col='ts')} AS b, count(*) FROM timeline_point WHERE user_id = %s AND ts >= %s AND ts < %s GROUP BY b",
+                [granularity, timezone, timezone, user.pk, since, until],
+            )
+            for start, n in cursor.fetchall():
+                bucket(start).point_count = n
         cursor.execute(
             f"SELECT {trunc.format(col='start')} AS b, count(*) FROM timeline_visit WHERE user_id = %s AND start >= %s AND start < %s GROUP BY b",
             [granularity, timezone, timezone, user.pk, since, until],
@@ -169,7 +172,7 @@ class PlaceStat:
 
 
 def place_stats(user: User, since: datetime.datetime | None = None, until: datetime.datetime | None = None, limit: int = 100) -> list[PlaceStat]:
-    """Time spent per place (by the visits matched to it), most time first."""
+    """Time spent per place (by the visits matched to it), most time first. Aggregated in the database."""
     q = Q(user=user, place_client_id__isnull=False)
     if since is not None:
         q &= Q(end__gte=since)
@@ -177,14 +180,21 @@ def place_stats(user: User, since: datetime.datetime | None = None, until: datet
         q &= Q(start__lt=until)
     if since is not None and until is not None:
         _span(since, until)
-    rows: dict[str, dict] = {}
-    for v in models.Visit.objects.filter(q).only("place_client_id", "start", "end"):
-        row = rows.setdefault(v.place_client_id, {"n": 0, "s": 0.0, "first": v.start, "last": v.end})
-        row["n"] += 1
-        row["s"] += (v.end - v.start).total_seconds()
-        row["first"] = min(row["first"], v.start)
-        row["last"] = max(row["last"], v.end)
-    places = {p.client_id: p for p in models.Place.objects.filter(user=user, client_id__in=list(rows), deleted_at=None)}
-    ranked = sorted(rows.items(), key=lambda kv: kv[1]["s"], reverse=True)[:limit]
-    return [PlaceStat(place_client_id=k, place=places.get(k), visit_count=r["n"], seconds=r["s"], first_visit_at=r["first"], last_visit_at=r["last"]) for k, r in ranked]
-
+    rows = list(
+        models.Visit.objects.filter(q)
+        .values("place_client_id")
+        .annotate(n=Count("id"), spent=Sum(F("end") - F("start")), first=Min("start"), last=Max("end"))
+        .order_by("-spent", "place_client_id")[:limit]
+    )
+    places = {p.client_id: p for p in models.Place.objects.filter(user=user, client_id__in=[r["place_client_id"] for r in rows], deleted_at=None)}
+    return [
+        PlaceStat(
+            place_client_id=r["place_client_id"],
+            place=places.get(r["place_client_id"]),
+            visit_count=r["n"],
+            seconds=r["spent"].total_seconds() if r["spent"] is not None else 0.0,
+            first_visit_at=r["first"],
+            last_visit_at=r["last"],
+        )
+        for r in rows
+    ]

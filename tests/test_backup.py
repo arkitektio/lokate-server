@@ -26,6 +26,11 @@ mutation Places($places: [PlaceInput!]!, $deleted: [DeletedInput!]!) {
   syncPlaces(places: $places, deleted: $deleted) { applied stale { clientId name updatedAt deletedAt } }
 }
 """
+PLACES_BACK = """
+mutation Places($places: [PlaceInput!]!, $deleted: [DeletedInput!]!) {
+  syncPlaces(places: $places, deleted: $deleted) { places { id clientId name } }
+}
+"""
 CHANGES = """
 query Changes($cursor: String, $limit: Int) {
   changes(cursor: $cursor, limit: $limit) {
@@ -220,6 +225,13 @@ async def test_places_last_write_wins(run):
     # A newer edit wins.
     newer = (await run(SYNC_PLACES, {"places": [place("home", "New home", 20)], "deleted": []}, token="phone-b"))["syncPlaces"]
     assert newer == {"applied": 1, "stale": []}
+
+    # The answer carries the server's copy of what was sent, whichever side won.
+    copies = await run(PLACES_BACK, {"places": [place("home", "Older still", 1), place("new", "New place", 1)], "deleted": []})
+    assert [(p["clientId"], p["name"]) for p in copies["syncPlaces"]["places"]] == [("home", "New home"), ("new", "New place")]
+    assert all(p["id"] for p in copies["syncPlaces"]["places"])
+    tombstoned = await run(PLACES_BACK, {"places": [place("new", "New place", 1)], "deleted": [{"clientId": "new", "deletedAt": iso(30)}]})
+    assert tombstoned["syncPlaces"]["places"] == []
 
     # The same update again is a no-op: applied, not stale, and no new stamp.
     before = await stamps("timeline_place")

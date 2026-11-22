@@ -126,6 +126,7 @@ class ReplaceResult:
 class PlaceSyncResult:
     applied: int
     stale: list[models.Place]
+    places: list[models.Place]
 
 
 @dataclass
@@ -400,7 +401,8 @@ def sync_places(caller: Caller, places: list[PlaceIn], deleted: list[DeletedIn])
                 stale[row.pk] = row
 
         fresh = list(models.Place.objects.filter(pk__in=list(stale)).order_by("client_id"))
-    return PlaceSyncResult(applied=applied, stale=fresh)
+        current = list(models.Place.objects.filter(user=caller.user, client_id__in=[p.client_id for p in places], deleted_at=None).order_by("client_id"))
+    return PlaceSyncResult(applied=applied, stale=fresh, places=current)
 
 
 # --------------------------------------------------------------------------- reads

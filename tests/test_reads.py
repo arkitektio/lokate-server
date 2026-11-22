@@ -187,3 +187,62 @@ async def test_reads_need_a_token(run, seeded):
     ctx.headers = {}
     result = await schema.execute("query { points { id } }", context_value=ctx)
     assert result.errors
+
+
+async def test_place_visit_stats_and_visit_places_in_one_answer(run, seeded):
+    # A second stay at work, and one at a place that was deleted: the list's counts are each
+    # place's own, and a visit's place is its live place or null.
+    await run(
+        REPLACE,
+        {
+            "from": iso(0),
+            "visits": [visit("v-home", 0, 30, HOME, "home"), visit("v-work", 40, 180, WORK, "work"), visit("v-work2", 300, 360, WORK, "work"), visit("v-gone", 400, 410, HOME, "gone")],
+            "trips": [],
+        },
+    )
+    places = (await run("query { places(ordering: [{name: ASC}]) { clientId visitCount lastVisitAt } }"))["places"]
+    assert [(p["clientId"], p["visitCount"], p["lastVisitAt"]) for p in places] == [("home", 1, iso(30)), ("work", 2, iso(360))]
+
+    visits = (await run("query { visits(ordering: [{start: ASC}]) { clientId place { clientId visitCount } } }"))["visits"]
+    assert [(v["clientId"], v["place"] and (v["place"]["clientId"], v["place"]["visitCount"])) for v in visits] == [
+        ("v-home", ("home", 1)),
+        ("v-work", ("work", 2)),
+        ("v-work2", ("work", 2)),
+        ("v-gone", None),
+    ]
+
+    # Another user's place of the same client id is never matched or counted.
+    theirs = (await run("query { places { clientId visitCount } visits { clientId place { name } } }", token="other"))
+    assert theirs["places"] == [{"clientId": "home", "visitCount": 1}]
+    assert theirs["visits"] == [{"clientId": "v-x", "place": {"name": "Their home"}}]
+
+
+async def test_stats_count_points_only_when_asked(run, seeded):
+    from timeline import reads
+    from asgiref.sync import sync_to_async
+    from authentikate.models import User
+
+    q = 'query Q($s: DateTime!, $u: DateTime!) { stats(since: $s, until: $u) { ...B } } fragment B on StatsBucket { visitCount pointCount }'
+    [asked] = (await run(q, {"s": iso(-600), "u": iso(1440)}))["stats"]
+    assert asked == {"visitCount": 2, "pointCount": 14}
+
+    user = await sync_to_async(lambda: User.objects.filter(lokate_devices__device_id__isnull=False).order_by("pk").first())()
+    [skipped] = await sync_to_async(reads.stats)(user, T0 - datetime.timedelta(hours=10), T0 + datetime.timedelta(hours=24), count_points=False)
+    [counted] = await sync_to_async(reads.stats)(user, T0 - datetime.timedelta(hours=10), T0 + datetime.timedelta(hours=24))
+    assert (skipped.point_count, skipped.visit_count) == (0, counted.visit_count)
+    assert counted.point_count > 0
+
+
+async def test_place_stats_rank_and_limit(run, seeded):
+    await run(
+        REPLACE,
+        {"from": iso(0), "visits": [visit("v-home", 0, 30, HOME, "home"), visit("v-home2", 500, 1000, HOME, "home"), visit("v-work", 40, 180, WORK, "work")], "trips": []},
+    )
+    stats = (await run("query { placeStats { placeClientId visitCount seconds firstVisitAt lastVisitAt place { name } } }"))["placeStats"]
+    assert stats == [
+        {"placeClientId": "home", "visitCount": 2, "seconds": 1800.0 + 30000.0, "firstVisitAt": iso(0), "lastVisitAt": iso(1000), "place": {"name": "Home"}},
+        {"placeClientId": "work", "visitCount": 1, "seconds": 8400.0, "firstVisitAt": iso(40), "lastVisitAt": iso(180), "place": {"name": "Office"}},
+    ]
+    assert [s["placeClientId"] for s in (await run("query { placeStats(limit: 1) { placeClientId } }"))["placeStats"]] == ["home"]
+    windowed = (await run("query Q($s: DateTime!) { placeStats(since: $s) { placeClientId visitCount } }", {"s": iso(200)}))["placeStats"]
+    assert windowed == [{"placeClientId": "home", "visitCount": 1}]
