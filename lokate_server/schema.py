@@ -30,7 +30,10 @@ def field(scope: str = "lokate_read", **kwargs):  # noqa: ANN201
 def mutation(scope: str = "lokate_write", roles: list[str] | None = None, **kwargs):  # noqa: ANN201
     """A write: an app needs ``scope`` for it, a member one of ``roles`` (``lokate_editor`` unless it
     says otherwise; ``lokate_admin`` holds every role)."""
-    return strawberry_django.mutation(extensions=[AuthExtension(scopes=[scope], any_role_of=roles or [EDITOR])], **kwargs)
+    return strawberry_django.mutation(
+        extensions=[AuthExtension(scopes=[scope], any_role_of=roles or [EDITOR])],
+        **kwargs,
+    )
 
 
 @strawberry.type
@@ -38,28 +41,60 @@ class Query:
     """The root query type."""
 
     # The stored rows, as lists (paginated, filterable, orderable) and one by id.
-    devices: list[types.Device] = field(description="Your phones (installs) that have backed up here.")
+    devices: list[types.Device] = field(
+        description="Your phones (installs) that have backed up here."
+    )
     device: types.Device = field(resolver=queries.device, description="A device by id.")
-    points: list[types.Point] = field(description="Location fixes (paginated, filterable by time, device, box or distance).")
-    points_count: int = field(resolver=queries.points_count, description="How many points match (the same filters as `points`).")
+    points: list[types.Point] = field(
+        description="Location fixes (paginated, filterable by time, device, box or distance)."
+    )
+    points_count: int = field(
+        resolver=queries.points_count,
+        description="How many points match (the same filters as `points`).",
+    )
     point: types.Point = field(resolver=queries.point, description="A point by id.")
-    visits: list[types.Visit] = field(description="Stays (paginated, filterable by time, device, place, box or distance).")
-    visits_count: int = field(resolver=queries.visits_count, description="How many visits match (the same filters as `visits`).")
+    visits: list[types.Visit] = field(
+        description="Stays (paginated, filterable by time, device, place, box or distance)."
+    )
+    visits_count: int = field(
+        resolver=queries.visits_count,
+        description="How many visits match (the same filters as `visits`).",
+    )
     visit: types.Visit = field(resolver=queries.visit, description="A visit by id.")
-    trips: list[types.Trip] = field(description="Movements between visits (paginated, filterable by time, device, mode or distance).")
-    trips_count: int = field(resolver=queries.trips_count, description="How many trips match (the same filters as `trips`).")
+    trips: list[types.Trip] = field(
+        description="Movements between visits (paginated, filterable by time, device, mode or distance)."
+    )
+    trips_count: int = field(
+        resolver=queries.trips_count,
+        description="How many trips match (the same filters as `trips`).",
+    )
     trip: types.Trip = field(resolver=queries.trip, description="A trip by id.")
-    places: list[types.Place] = field(description="Your named places (paginated, filterable by name, box or distance).")
+    places: list[types.Place] = field(
+        description="Your named places (paginated, filterable by name, box or distance)."
+    )
     place: types.Place = field(resolver=queries.place, description="A place by id.")
 
     # Aggregates.
-    day: graphql.Day = field(resolver=graphql.day, description="One calendar day (in `timezone`, IANA name): its visits and trips in order, and totals.")
-    route: list[graphql.Track] = field(resolver=graphql.route, description="Your path between `since` and `until`, one GeoJSON line per device.")
-    stats: list[graphql.StatsBucket] = field(resolver=graphql.stats, description="Points, visits, trips and distance per day, week or month.")
-    place_stats: list[graphql.PlaceStat] = field(resolver=graphql.place_stats, description="Time spent per place, most first.")
+    day: graphql.Day = field(
+        resolver=graphql.day,
+        description="One calendar day (in `timezone`, IANA name): its visits and trips in order, and totals.",
+    )
+    route: list[graphql.Track] = field(
+        resolver=graphql.route,
+        description="Your path between `since` and `until`, one GeoJSON line per device.",
+    )
+    stats: list[graphql.StatsBucket] = field(
+        resolver=graphql.stats,
+        description="Points, visits, trips and distance per day, week or month.",
+    )
+    place_stats: list[graphql.PlaceStat] = field(
+        resolver=graphql.place_stats, description="Time spent per place, most first."
+    )
 
     # Sync.
-    sync_state: graphql.SyncState = field(resolver=graphql.sync_state, description="The calling device's watermarks.")
+    sync_state: graphql.SyncState = field(
+        resolver=graphql.sync_state, description="The calling device's watermarks."
+    )
     changes: graphql.ChangeSet = field(
         resolver=graphql.changes,
         description=f"Everything of yours, from all your devices, changed after `cursor`, oldest first (limit at most {backup.MAX_BATCH}). Page until hasMore is false; used to restore.",
@@ -102,4 +137,6 @@ schema = Schema(
 # `lokate_all` passes every scope check and `lokate_admin` every role check. lokate has no hub
 # Service (no structures to annotate), so it tells authentikate itself rather than through
 # arkitekt_service.graphql.annotate_schema.
-declare_catch_alls(scope=contract.description.all_scope, role=contract.description.admin_role)
+declare_catch_alls(
+    scope=contract.description.all_scope, role=contract.description.admin_role
+)

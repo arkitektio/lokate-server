@@ -46,7 +46,13 @@ class InBox(models.Lookup):
     def as_sql(self, compiler: Any, connection: Any) -> tuple[str, list]:
         lhs, params = self.process_lhs(compiler, connection)
         south, west, north, east = (float(v) for v in self.rhs)
-        return f"{lhs} && ST_MakeEnvelope(%s, %s, %s, %s, 4326)", [*params, west, south, east, north]
+        return f"{lhs} && ST_MakeEnvelope(%s, %s, %s, %s, 4326)", [
+            *params,
+            west,
+            south,
+            east,
+            north,
+        ]
 
 
 @GeometryPointField.register_lookup

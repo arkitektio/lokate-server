@@ -39,7 +39,14 @@ def backend_stack():
         def db_ready() -> None:
             if "db" not in ports:
                 ports["db"] = e.get_port("db", 5432)
-            with psycopg.connect(dbname="testdb", user="test", password="test", host="localhost", port=ports["db"], connect_timeout=1) as connection:
+            with psycopg.connect(
+                dbname="testdb",
+                user="test",
+                password="test",
+                host="localhost",
+                port=ports["db"],
+                connect_timeout=1,
+            ) as connection:
                 connection.execute("SELECT 1")
 
         _wait(db_ready, "postgres")
@@ -63,5 +70,7 @@ def django_db_setup(django_db_setup, django_db_blocker):
 
     with django_db_blocker.unblock():
         with connections["default"].cursor() as cursor:
-            cursor.execute("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()")
+            cursor.execute(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()"
+            )
         connections.close_all()

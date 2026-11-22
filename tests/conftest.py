@@ -27,7 +27,9 @@ def context(token: str) -> HttpContext:
 def clean_points(request):
     """``timeline_point`` is unmanaged, so the test flush leaves it alone; empty it after each test."""
     yield
-    if "transactional_db" in request.fixturenames or request.node.get_closest_marker("django_db"):
+    if "transactional_db" in request.fixturenames or request.node.get_closest_marker(
+        "django_db"
+    ):
         with connection.cursor() as cursor:
             cursor.execute("TRUNCATE timeline_point")
 
@@ -36,8 +38,15 @@ def clean_points(request):
 def run(transactional_db):
     """Run a document as ``token`` (phone-a by default); fails the test on errors unless ``errors=True``."""
 
-    async def _run(document: str, variables: dict | None = None, token: str = "phone-a", errors: bool = False):
-        result = await schema.execute(document, variable_values=variables or {}, context_value=context(token))
+    async def _run(
+        document: str,
+        variables: dict | None = None,
+        token: str = "phone-a",
+        errors: bool = False,
+    ):
+        result = await schema.execute(
+            document, variable_values=variables or {}, context_value=context(token)
+        )
         if not errors:
             assert not result.errors, result.errors
             return result.data

@@ -35,7 +35,10 @@ class NextStamp(models.Func):
 
 
 def stamp_field() -> models.BigIntegerField:
-    return models.BigIntegerField(db_default=NextStamp(), help_text="The change stamp (sequence, not time) the changes cursor pages through.")
+    return models.BigIntegerField(
+        db_default=NextStamp(),
+        help_text="The change stamp (sequence, not time) the changes cursor pages through.",
+    )
 
 
 class TripMode(models.TextChoices):
@@ -55,14 +58,28 @@ class Device(models.Model):
     through ``changes``.
     """
 
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="lokate_devices")
-    device_id = models.CharField(max_length=2000, help_text="The token's client_device claim.")
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="lokate_devices"
+    )
+    device_id = models.CharField(
+        max_length=2000, help_text="The token's client_device claim."
+    )
     first_seen_at = models.DateTimeField(auto_now_add=True)
-    last_upload_at = models.DateTimeField(null=True, blank=True, help_text="When this device last wrote anything.")
-    segments_from = models.DateTimeField(null=True, blank=True, help_text="The `from` of this device's last replaceSegments.")
+    last_upload_at = models.DateTimeField(
+        null=True, blank=True, help_text="When this device last wrote anything."
+    )
+    segments_from = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="The `from` of this device's last replaceSegments.",
+    )
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["user", "device_id"], name="timeline_device_unique")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "device_id"], name="timeline_device_unique"
+            )
+        ]
 
     def __str__(self) -> str:
         return f"{self.device_id} of {self.user_id}"
@@ -72,13 +89,21 @@ class Point(models.Model):
     """One location fix. Partitioned by month of ``ts`` (see the module docstring)."""
 
     id = models.BigAutoField(primary_key=True)
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="+", db_constraint=False)
-    device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name="points", db_constraint=False)
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="+", db_constraint=False
+    )
+    device = models.ForeignKey(
+        Device, on_delete=models.CASCADE, related_name="points", db_constraint=False
+    )
     client_id = models.CharField(max_length=255)
     ts = models.DateTimeField()
     lat = models.FloatField()
     lon = models.FloatField()
-    geom = models.GeneratedField(expression=MakePoint(F("lon"), F("lat")), output_field=GeometryPointField(), db_persist=True)
+    geom = models.GeneratedField(
+        expression=MakePoint(F("lon"), F("lat")),
+        output_field=GeometryPointField(),
+        db_persist=True,
+    )
     acc = models.FloatField(null=True, blank=True)
     speed = models.FloatField(null=True, blank=True)
     heading = models.FloatField(null=True, blank=True)
@@ -100,18 +125,33 @@ class Visit(models.Model):
     end = models.DateTimeField()
     lat = models.FloatField()
     lon = models.FloatField()
-    geom = models.GeneratedField(expression=MakePoint(F("lon"), F("lat")), output_field=GeometryPointField(), db_persist=True)
+    geom = models.GeneratedField(
+        expression=MakePoint(F("lon"), F("lat")),
+        output_field=GeometryPointField(),
+        db_persist=True,
+    )
     radius = models.FloatField()
     point_count = models.IntegerField()
-    place_client_id = models.CharField(max_length=255, null=True, blank=True, help_text="The client id of the place this visit was matched to.")
+    place_client_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="The client id of the place this visit was matched to.",
+    )
     received_at = stamp_field()
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["device", "client_id"], name="timeline_visit_unique")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["device", "client_id"], name="timeline_visit_unique"
+            )
+        ]
         indexes = [
             models.Index(fields=["user", "received_at"], name="tl_visit_user_stamp"),
             models.Index(fields=["device", "start"], name="tl_visit_device_start"),
-            models.Index(fields=["user", "place_client_id"], name="tl_visit_user_place"),
+            models.Index(
+                fields=["user", "place_client_id"], name="tl_visit_user_place"
+            ),
             GistIndex(fields=["geom"], name="tl_visit_geom"),
         ]
 
@@ -124,14 +164,30 @@ class Trip(models.Model):
     client_id = models.CharField(max_length=255)
     start = models.DateTimeField()
     end = models.DateTimeField()
-    from_visit = models.CharField(max_length=255, null=True, blank=True, help_text="The client id of the visit it left.")
-    to_visit = models.CharField(max_length=255, null=True, blank=True, help_text="The client id of the visit it arrived at.")
+    from_visit = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="The client id of the visit it left.",
+    )
+    to_visit = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="The client id of the visit it arrived at.",
+    )
     distance = models.FloatField(help_text="Meters.")
-    mode = models.CharField(max_length=16, choices=TripMode.choices, default=TripMode.UNKNOWN)
+    mode = models.CharField(
+        max_length=16, choices=TripMode.choices, default=TripMode.UNKNOWN
+    )
     received_at = stamp_field()
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["device", "client_id"], name="timeline_trip_unique")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["device", "client_id"], name="timeline_trip_unique"
+            )
+        ]
         indexes = [
             models.Index(fields=["user", "received_at"], name="tl_trip_user_stamp"),
             models.Index(fields=["device", "start"], name="tl_trip_device_start"),
@@ -151,14 +207,26 @@ class Place(models.Model):
     name = models.CharField(max_length=2000, null=True, blank=True)
     lat = models.FloatField(null=True, blank=True)
     lon = models.FloatField(null=True, blank=True)
-    geom = models.GeneratedField(expression=MakePoint(F("lon"), F("lat")), output_field=GeometryPointField(), db_persist=True)
+    geom = models.GeneratedField(
+        expression=MakePoint(F("lon"), F("lat")),
+        output_field=GeometryPointField(),
+        db_persist=True,
+    )
     radius = models.FloatField(null=True, blank=True)
-    updated_at = models.DateTimeField(help_text="The phone's edit time; last write wins on it.")
-    deleted_at = models.DateTimeField(null=True, blank=True, help_text="Set on a tombstone.")
+    updated_at = models.DateTimeField(
+        help_text="The phone's edit time; last write wins on it."
+    )
+    deleted_at = models.DateTimeField(
+        null=True, blank=True, help_text="Set on a tombstone."
+    )
     received_at = stamp_field()
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["user", "client_id"], name="timeline_place_unique")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "client_id"], name="timeline_place_unique"
+            )
+        ]
         indexes = [
             models.Index(fields=["user", "received_at"], name="tl_place_user_stamp"),
             GistIndex(fields=["geom"], name="tl_place_geom"),

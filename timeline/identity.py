@@ -32,9 +32,13 @@ class Caller:
 def caller(info: Info) -> Caller:
     """The calling user and device. Anonymous calls are refused."""
     request = info.context.request
-    user = request._user  # unset without a token; the property would raise a ValueError instead
+    user = (
+        request._user
+    )  # unset without a token; the property would raise a ValueError instead
     if user is None or getattr(user, "is_anonymous", True):
-        raise GraphQLError("Authentication required.", extensions={"code": "UNAUTHENTICATED"})
+        raise GraphQLError(
+            "Authentication required.", extensions={"code": "UNAUTHENTICATED"}
+        )
     token = request._extensions.get("token")
     return Caller(
         user=user,  # type: ignore[arg-type]

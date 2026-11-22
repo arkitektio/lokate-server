@@ -3,8 +3,8 @@ own (the ``@auth`` directive publishes it, a generated client gathers it), and `
 for all of them."""
 
 import pytest
-
 from arkitekt_service.graphql import scope_gaps
+
 from lokate_server.schema import schema
 
 pytestmark = pytest.mark.django_db(transaction=True)

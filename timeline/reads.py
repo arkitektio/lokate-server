@@ -22,7 +22,10 @@ def zone(name: str) -> zoneinfo.ZoneInfo:
     try:
         return zoneinfo.ZoneInfo(name)
     except (zoneinfo.ZoneInfoNotFoundError, ValueError):
-        raise invalid(f"{name!r} is not an IANA time zone (e.g. Europe/Vienna).", "INVALID_TIMEZONE") from None
+        raise invalid(
+            f"{name!r} is not an IANA time zone (e.g. Europe/Vienna).",
+            "INVALID_TIMEZONE",
+        ) from None
 
 
 def _span(since: datetime.datetime, until: datetime.datetime) -> None:
@@ -45,14 +48,31 @@ def day(user: User, date: datetime.date, timezone: str = "UTC") -> Day:
     """The visits and trips overlapping ``date`` (in ``timezone``), oldest first, and the day's totals."""
     tz = zone(timezone)
     start = datetime.datetime.combine(date, datetime.time(), tzinfo=tz)
-    end = datetime.datetime.combine(date + datetime.timedelta(days=1), datetime.time(), tzinfo=tz)
+    end = datetime.datetime.combine(
+        date + datetime.timedelta(days=1), datetime.time(), tzinfo=tz
+    )
     overlap = Q(user=user, end__gte=start, start__lt=end)
-    visits = list(models.Visit.objects.filter(overlap).select_related("device").order_by("start"))
-    trips = list(models.Trip.objects.filter(overlap).select_related("device").order_by("start"))
+    visits = list(
+        models.Visit.objects.filter(overlap).select_related("device").order_by("start")
+    )
+    trips = list(
+        models.Trip.objects.filter(overlap).select_related("device").order_by("start")
+    )
     with connection.cursor() as cursor:
-        cursor.execute("SELECT count(*) FROM timeline_point WHERE user_id = %s AND ts >= %s AND ts < %s", [user.pk, start, end])
+        cursor.execute(
+            "SELECT count(*) FROM timeline_point WHERE user_id = %s AND ts >= %s AND ts < %s",
+            [user.pk, start, end],
+        )
         (points,) = cursor.fetchone()
-    return Day(date=date, start=start, end=end, visits=visits, trips=trips, point_count=points, distance=sum(t.distance for t in trips))
+    return Day(
+        date=date,
+        start=start,
+        end=end,
+        visits=visits,
+        trips=trips,
+        point_count=points,
+        distance=sum(t.distance for t in trips),
+    )
 
 
 @dataclass
@@ -65,7 +85,14 @@ class Track:
     geojson: str
 
 
-def route(user: User, since: datetime.datetime, until: datetime.datetime, devices: list[str] | None = None, simplify: float | None = None, max_accuracy: float | None = None) -> list[Track]:
+def route(
+    user: User,
+    since: datetime.datetime,
+    until: datetime.datetime,
+    devices: list[str] | None = None,
+    simplify: float | None = None,
+    max_accuracy: float | None = None,
+) -> list[Track]:
     """One track per device: its points in ``[since, until)`` joined in time order, as GeoJSON.
 
     ``simplify`` (meters) thins the line with Douglas-Peucker for drawing; ``distance`` is the
@@ -73,7 +100,9 @@ def route(user: User, since: datetime.datetime, until: datetime.datetime, device
     """
     _span(since, until)
     if until - since > datetime.timedelta(days=MAX_ROUTE_DAYS):
-        raise invalid(f"A route spans at most {MAX_ROUTE_DAYS} days; use stats for longer ranges.")
+        raise invalid(
+            f"A route spans at most {MAX_ROUTE_DAYS} days; use stats for longer ranges."
+        )
     tolerance = (simplify or 0) / 111_320  # meters to degrees, near enough for drawing
     where, params = ["user_id = %s", "ts >= %s", "ts < %s"], [user.pk, since, until]
     if devices:
@@ -89,14 +118,27 @@ def route(user: User, since: datetime.datetime, until: datetime.datetime, device
                    ST_AsGeoJSON(CASE WHEN %s > 0 THEN ST_Simplify(line, %s) ELSE line END, 6)
             FROM (
                 SELECT device_id, min(ts) AS a, max(ts) AS b, count(*) AS n, ST_MakeLine(geom ORDER BY ts) AS line
-                FROM timeline_point WHERE {' AND '.join(where)} GROUP BY device_id
+                FROM timeline_point WHERE {" AND ".join(where)} GROUP BY device_id
             ) AS tracks ORDER BY a
             """,
             [tolerance, tolerance, *params],
         )
         rows = cursor.fetchall()
-    found = {d.pk: d for d in models.Device.objects.filter(user=user, pk__in=[r[0] for r in rows])}
-    return [Track(device=found[r[0]], start=r[1], end=r[2], point_count=r[3], distance=r[4] or 0.0, geojson=r[5]) for r in rows]
+    found = {
+        d.pk: d
+        for d in models.Device.objects.filter(user=user, pk__in=[r[0] for r in rows])
+    }
+    return [
+        Track(
+            device=found[r[0]],
+            start=r[1],
+            end=r[2],
+            point_count=r[3],
+            distance=r[4] or 0.0,
+            geojson=r[5],
+        )
+        for r in rows
+    ]
 
 
 @dataclass
@@ -117,7 +159,14 @@ class Bucket:
     by_mode: dict[str, ModeStat] = field(default_factory=dict)
 
 
-def stats(user: User, since: datetime.datetime, until: datetime.datetime, granularity: str = "day", timezone: str = "UTC", count_points: bool = True) -> list[Bucket]:
+def stats(
+    user: User,
+    since: datetime.datetime,
+    until: datetime.datetime,
+    granularity: str = "day",
+    timezone: str = "UTC",
+    count_points: bool = True,
+) -> list[Bucket]:
     """Counts and distances per day, week or month (in ``timezone``); empty buckets left out.
 
     Visits and trips count in the bucket they start in. Counting the points reads every raw
@@ -149,7 +198,7 @@ def stats(user: User, since: datetime.datetime, until: datetime.datetime, granul
         for start, n in cursor.fetchall():
             bucket(start).visit_count = n
         cursor.execute(
-            f"""SELECT {trunc.format(col='start')} AS b, mode, count(*), sum(distance), sum(extract(epoch FROM "end" - start))
+            f"""SELECT {trunc.format(col="start")} AS b, mode, count(*), sum(distance), sum(extract(epoch FROM "end" - start))
             FROM timeline_trip WHERE user_id = %s AND start >= %s AND start < %s GROUP BY b, mode""",
             [granularity, timezone, timezone, user.pk, since, until],
         )
@@ -157,7 +206,12 @@ def stats(user: User, since: datetime.datetime, until: datetime.datetime, granul
             b = bucket(start)
             b.trip_count += n
             b.distance += distance or 0.0
-            b.by_mode[mode] = ModeStat(mode=mode, trips=n, distance=distance or 0.0, seconds=float(seconds or 0))
+            b.by_mode[mode] = ModeStat(
+                mode=mode,
+                trips=n,
+                distance=distance or 0.0,
+                seconds=float(seconds or 0),
+            )
     return [buckets[k] for k in sorted(buckets)]
 
 
@@ -171,7 +225,12 @@ class PlaceStat:
     last_visit_at: datetime.datetime
 
 
-def place_stats(user: User, since: datetime.datetime | None = None, until: datetime.datetime | None = None, limit: int = 100) -> list[PlaceStat]:
+def place_stats(
+    user: User,
+    since: datetime.datetime | None = None,
+    until: datetime.datetime | None = None,
+    limit: int = 100,
+) -> list[PlaceStat]:
     """Time spent per place (by the visits matched to it), most time first. Aggregated in the database."""
     q = Q(user=user, place_client_id__isnull=False)
     if since is not None:
@@ -183,10 +242,22 @@ def place_stats(user: User, since: datetime.datetime | None = None, until: datet
     rows = list(
         models.Visit.objects.filter(q)
         .values("place_client_id")
-        .annotate(n=Count("id"), spent=Sum(F("end") - F("start")), first=Min("start"), last=Max("end"))
+        .annotate(
+            n=Count("id"),
+            spent=Sum(F("end") - F("start")),
+            first=Min("start"),
+            last=Max("end"),
+        )
         .order_by("-spent", "place_client_id")[:limit]
     )
-    places = {p.client_id: p for p in models.Place.objects.filter(user=user, client_id__in=[r["place_client_id"] for r in rows], deleted_at=None)}
+    places = {
+        p.client_id: p
+        for p in models.Place.objects.filter(
+            user=user,
+            client_id__in=[r["place_client_id"] for r in rows],
+            deleted_at=None,
+        )
+    }
     return [
         PlaceStat(
             place_client_id=r["place_client_id"],

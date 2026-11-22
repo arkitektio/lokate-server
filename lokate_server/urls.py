@@ -14,13 +14,16 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
+
+from arkitekt_service.service.views import answers_challenge
 from django.contrib import admin
 from django.views.decorators.csrf import csrf_exempt
-from arkitekt_service.service.views import answers_challenge
 from health_check.views import MainView
 from kante.path import dynamicpath
 
 urlpatterns = [
     dynamicpath("admin/", admin.site.urls),
-    dynamicpath("ht", answers_challenge(csrf_exempt(MainView.as_view())), name="health_check"),
+    dynamicpath(
+        "ht", answers_challenge(csrf_exempt(MainView.as_view())), name="health_check"
+    ),
 ]

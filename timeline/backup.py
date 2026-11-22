@@ -152,12 +152,15 @@ class ChangeSet:
 
 def _aware(value: datetime.datetime) -> datetime.datetime:
     """A timestamp without an offset is taken as UTC."""
-    return value if value.tzinfo is not None else value.replace(tzinfo=datetime.timezone.utc)
+    return value if value.tzinfo is not None else value.replace(tzinfo=datetime.UTC)
 
 
 def check_batch(name: str, rows: list) -> None:
     if len(rows) > MAX_BATCH:
-        raise invalid(f"{name}: {len(rows)} rows in one call; at most {MAX_BATCH} are accepted. Send them in batches.", "BATCH_TOO_LARGE")
+        raise invalid(
+            f"{name}: {len(rows)} rows in one call; at most {MAX_BATCH} are accepted. Send them in batches.",
+            "BATCH_TOO_LARGE",
+        )
 
 
 def _check_client_ids(name: str, ids: list[str]) -> None:
@@ -176,7 +179,9 @@ def _check_client_ids(name: str, ids: list[str]) -> None:
 def user_lock(user_id: int) -> None:
     """Serialise this user's writes until the transaction ends (see the module docstring)."""
     with connection.cursor() as cursor:
-        cursor.execute("SELECT pg_advisory_xact_lock(%s)", [_USER_LOCK_BASE + int(user_id)])
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock(%s)", [_USER_LOCK_BASE + int(user_id)]
+        )
 
 
 def _device(user: User, device_id: str) -> models.Device:
@@ -185,7 +190,9 @@ def _device(user: User, device_id: str) -> models.Device:
 
 
 def _touch(device: models.Device, **fields: Any) -> None:
-    models.Device.objects.filter(pk=device.pk).update(last_upload_at=timezone.now(), **fields)
+    models.Device.objects.filter(pk=device.pk).update(
+        last_upload_at=timezone.now(), **fields
+    )
 
 
 # --------------------------------------------------------------------------- points
@@ -261,7 +268,9 @@ WHERE (timeline_trip.start, timeline_trip."end", timeline_trip.from_visit, timel
 """
 
 
-def replace_segments(caller: Caller, from_: datetime.datetime, visits: list[VisitIn], trips: list[TripIn]) -> ReplaceResult:
+def replace_segments(
+    caller: Caller, from_: datetime.datetime, visits: list[VisitIn], trips: list[TripIn]
+) -> ReplaceResult:
     """Make this device's visits and trips from ``from_`` on exactly the ones sent, in one transaction.
 
     Sent rows are upserted (an unchanged one is left alone, stamp and all); the device's rows
@@ -277,10 +286,14 @@ def replace_segments(caller: Caller, from_: datetime.datetime, visits: list[Visi
     valid_modes = set(models.TripMode.values)
     for v in visits:
         if _aware(v.start) < from_:
-            raise invalid(f"visit {v.client_id} starts before `from`; replaceSegments only replaces from `from` on.")
+            raise invalid(
+                f"visit {v.client_id} starts before `from`; replaceSegments only replaces from `from` on."
+            )
     for t in trips:
         if _aware(t.start) < from_:
-            raise invalid(f"trip {t.client_id} starts before `from`; replaceSegments only replaces from `from` on.")
+            raise invalid(
+                f"trip {t.client_id} starts before `from`; replaceSegments only replaces from `from` on."
+            )
         if t.mode not in valid_modes:
             raise invalid(f"trip {t.client_id}: unknown mode {t.mode!r}.")
 
@@ -330,7 +343,12 @@ def replace_segments(caller: Caller, from_: datetime.datetime, visits: list[Visi
             )
             deleted_trips = cursor.rowcount
         _touch(device, segments_from=from_)
-    return ReplaceResult(deleted_visits=deleted_visits, deleted_trips=deleted_trips, visits=len(visits), trips=len(trips))
+    return ReplaceResult(
+        deleted_visits=deleted_visits,
+        deleted_trips=deleted_trips,
+        visits=len(visits),
+        trips=len(trips),
+    )
 
 
 # --------------------------------------------------------------------------- places
@@ -338,12 +356,16 @@ def replace_segments(caller: Caller, from_: datetime.datetime, visits: list[Visi
 
 def _update_place(row: models.Place, **fields: Any) -> None:
     """Write ``fields`` with a fresh stamp, and keep ``row`` in step for the rest of the batch."""
-    models.Place.objects.filter(pk=row.pk).update(received_at=models.NextStamp(), **fields)
+    models.Place.objects.filter(pk=row.pk).update(
+        received_at=models.NextStamp(), **fields
+    )
     for name, value in fields.items():
         setattr(row, name, value)
 
 
-def sync_places(caller: Caller, places: list[PlaceIn], deleted: list[DeletedIn]) -> PlaceSyncResult:
+def sync_places(
+    caller: Caller, places: list[PlaceIn], deleted: list[DeletedIn]
+) -> PlaceSyncResult:
     """Merge the phone's places into the user's, last write wins on ``updatedAt``.
 
     * An update newer than the server's copy is applied; an equal one is a no-op (a retry).
@@ -363,14 +385,30 @@ def sync_places(caller: Caller, places: list[PlaceIn], deleted: list[DeletedIn])
     stale: dict[int, models.Place] = {}
     with transaction.atomic():
         user_lock(caller.user.pk)
-        existing = {p.client_id: p for p in models.Place.objects.filter(user=caller.user, client_id__in=[p.client_id for p in places] + [d.client_id for d in deleted])}
+        existing = {
+            p.client_id: p
+            for p in models.Place.objects.filter(
+                user=caller.user,
+                client_id__in=[p.client_id for p in places]
+                + [d.client_id for d in deleted],
+            )
+        }
 
         for incoming in places:
             updated_at = _aware(incoming.updated_at)
-            fields = {"name": incoming.name, "lat": incoming.lat, "lon": incoming.lon, "radius": incoming.radius, "updated_at": updated_at, "deleted_at": None}
+            fields = {
+                "name": incoming.name,
+                "lat": incoming.lat,
+                "lon": incoming.lon,
+                "radius": incoming.radius,
+                "updated_at": updated_at,
+                "deleted_at": None,
+            }
             row = existing.get(incoming.client_id)
             if row is None:
-                existing[incoming.client_id] = models.Place.objects.create(user=caller.user, client_id=incoming.client_id, **fields)
+                existing[incoming.client_id] = models.Place.objects.create(
+                    user=caller.user, client_id=incoming.client_id, **fields
+                )
                 applied += 1
             elif row.deleted_at is not None:
                 if updated_at > row.deleted_at:
@@ -390,7 +428,12 @@ def sync_places(caller: Caller, places: list[PlaceIn], deleted: list[DeletedIn])
             deleted_at = _aware(tombstone.deleted_at)
             row = existing.get(tombstone.client_id)
             if row is None:
-                existing[tombstone.client_id] = models.Place.objects.create(user=caller.user, client_id=tombstone.client_id, updated_at=deleted_at, deleted_at=deleted_at)
+                existing[tombstone.client_id] = models.Place.objects.create(
+                    user=caller.user,
+                    client_id=tombstone.client_id,
+                    updated_at=deleted_at,
+                    deleted_at=deleted_at,
+                )
                 applied += 1
             elif row.deleted_at is not None:
                 applied += 1  # already gone: a retry, or another phone deleted it too
@@ -400,8 +443,16 @@ def sync_places(caller: Caller, places: list[PlaceIn], deleted: list[DeletedIn])
             else:
                 stale[row.pk] = row
 
-        fresh = list(models.Place.objects.filter(pk__in=list(stale)).order_by("client_id"))
-        current = list(models.Place.objects.filter(user=caller.user, client_id__in=[p.client_id for p in places], deleted_at=None).order_by("client_id"))
+        fresh = list(
+            models.Place.objects.filter(pk__in=list(stale)).order_by("client_id")
+        )
+        current = list(
+            models.Place.objects.filter(
+                user=caller.user,
+                client_id__in=[p.client_id for p in places],
+                deleted_at=None,
+            ).order_by("client_id")
+        )
     return PlaceSyncResult(applied=applied, stale=fresh, places=current)
 
 
@@ -416,9 +467,14 @@ def sync_state(caller: Caller) -> SyncState:
         state = SyncState(last_point_ts=None, point_count=0, segments_from=None)
     else:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT max(ts), count(*) FROM timeline_point WHERE device_id = %s", [device.pk])
+            cursor.execute(
+                "SELECT max(ts), count(*) FROM timeline_point WHERE device_id = %s",
+                [device.pk],
+            )
             last, count = cursor.fetchone()
-        state = SyncState(last_point_ts=last, point_count=count, segments_from=device.segments_from)
+        state = SyncState(
+            last_point_ts=last, point_count=count, segments_from=device.segments_from
+        )
     return state
 
 
@@ -470,9 +526,13 @@ def parse_cursor(cursor: str | None) -> int:
     try:
         value = int(cursor)
     except ValueError:
-        raise invalid(f"{cursor!r} is not a cursor this server issued.", "INVALID_CURSOR") from None
+        raise invalid(
+            f"{cursor!r} is not a cursor this server issued.", "INVALID_CURSOR"
+        ) from None
     if value < 0:
-        raise invalid(f"{cursor!r} is not a cursor this server issued.", "INVALID_CURSOR")
+        raise invalid(
+            f"{cursor!r} is not a cursor this server issued.", "INVALID_CURSOR"
+        )
     return value
 
 
@@ -487,14 +547,24 @@ def changes(caller: Caller, cursor: str | None, limit: int = MAX_BATCH) -> Chang
         raise invalid(f"limit must be between 1 and {MAX_BATCH}.", "BATCH_TOO_LARGE")
     after = parse_cursor(cursor)
     with connection.cursor() as db:
-        db.execute(_CHANGES, {"user": caller.user.pk, "after": after, "take": limit + 1})
+        db.execute(
+            _CHANGES, {"user": caller.user.pk, "after": after, "take": limit + 1}
+        )
         rows = db.fetchall()
 
     has_more = len(rows) > limit
     rows = rows[:limit]
     # Devices are read after the snapshot: a row's device committed with (or before) it.
     devices = {d.pk: d for d in models.Device.objects.filter(user=caller.user)}
-    result = ChangeSet(points=[], visits=[], trips=[], places=[], deleted_places=[], next_cursor=cursor, has_more=has_more)
+    result = ChangeSet(
+        points=[],
+        visits=[],
+        trips=[],
+        places=[],
+        deleted_places=[],
+        next_cursor=cursor,
+        has_more=has_more,
+    )
     for kind, _stamp, data in rows:
         row = _row(data)
         if kind == "place":
@@ -503,7 +573,11 @@ def changes(caller: Caller, cursor: str | None, limit: int = MAX_BATCH) -> Chang
             else:
                 result.places.append(models.Place(user=caller.user, **row))
             continue
-        model, bucket = {"point": (models.Point, result.points), "visit": (models.Visit, result.visits), "trip": (models.Trip, result.trips)}[kind]
+        model, bucket = {
+            "point": (models.Point, result.points),
+            "visit": (models.Visit, result.visits),
+            "trip": (models.Trip, result.trips),
+        }[kind]
         device = devices.get(row.pop("device_id"))
         if device is None:
             continue  # the server copy was deleted between the two reads
@@ -523,16 +597,23 @@ def delete_server_copy(caller: Caller, confirm: str) -> int:
     still on, its next sync uploads it again.
     """
     if confirm != CONFIRM_DELETE:
-        raise invalid(f'Pass confirm: "{CONFIRM_DELETE}" to delete the server copy.', "CONFIRMATION_REQUIRED")
+        raise invalid(
+            f'Pass confirm: "{CONFIRM_DELETE}" to delete the server copy.',
+            "CONFIRMATION_REQUIRED",
+        )
     with transaction.atomic():
         user_lock(caller.user.pk)
         with connection.cursor() as cursor:
-            cursor.execute("DELETE FROM timeline_point WHERE user_id = %s", [caller.user.pk])
+            cursor.execute(
+                "DELETE FROM timeline_point WHERE user_id = %s", [caller.user.pk]
+            )
             count = cursor.rowcount
         count += models.Visit.objects.filter(user=caller.user).delete()[0]
         count += models.Trip.objects.filter(user=caller.user).delete()[0]
         count += models.Place.objects.filter(user=caller.user).delete()[0]
         with connection.cursor() as cursor:
-            cursor.execute("DELETE FROM timeline_device WHERE user_id = %s", [caller.user.pk])
+            cursor.execute(
+                "DELETE FROM timeline_device WHERE user_id = %s", [caller.user.pk]
+            )
     logger.info("Deleted the server copy of user %s (%d rows)", caller.user.pk, count)
     return count

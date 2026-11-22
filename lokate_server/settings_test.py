@@ -36,9 +36,17 @@ AUTHENTIKATE = {
             # A token that names no device.
             "nodevice": {"sub": "1", "client_device": ""},
             # phone-a through an app granted only what it reads, for the scope tests (tests/test_scopes.py).
-            "readertest": {"sub": "1", "client_device": "phone-a", "scope": "openid lokate_read"},
+            "readertest": {
+                "sub": "1",
+                "client_device": "phone-a",
+                "scope": "openid lokate_read",
+            },
             # phone-a's user holding only the default role, for the scope tests.
-            "editortest": {"sub": "1", "client_device": "phone-a", "roles": ["lokate_editor"]},
+            "editortest": {
+                "sub": "1",
+                "client_device": "phone-a",
+                "roles": ["lokate_editor"],
+            },
         }.items()
     },
 }

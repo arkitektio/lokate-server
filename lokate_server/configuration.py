@@ -7,10 +7,15 @@ then the YAML file (``config.yaml`` where the service runs by default; override 
 with a ``ValidationError`` if they are not supplied via config or environment.
 """
 
-
-from arkitekt_service.server.settings import DjangoSettings, PostgresSettings, RedisSettings, ServiceSettings
+from arkitekt_service.server.settings import (
+    DjangoSettings,
+    PostgresSettings,
+    RedisSettings,
+    ServiceSettings,
+)
 from authentikate.base_models import AuthentikateSettings
 from pydantic import Field
+
 
 class Settings(ServiceSettings):
     """Top-level, validated configuration for the lokate service."""
@@ -18,4 +23,6 @@ class Settings(ServiceSettings):
     django: DjangoSettings = Field(description="Core Django settings.")
     postgres: PostgresSettings = Field(description="PostgreSQL connection.")
     redis: RedisSettings = Field(description="Redis connection.")
-    authentikate: AuthentikateSettings = Field(description="Token-verification config (authentikate).")
+    authentikate: AuthentikateSettings = Field(
+        description="Token-verification config (authentikate)."
+    )

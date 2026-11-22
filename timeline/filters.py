@@ -35,7 +35,9 @@ def _ids(prefix: str, field: str, value: list[strawberry.ID]) -> Q:
 
 
 def _in_box(prefix: str, value: BoxInput) -> Q:
-    return Q(**{f"{prefix}geom__in_box": (value.south, value.west, value.north, value.east)})
+    return Q(
+        **{f"{prefix}geom__in_box": (value.south, value.west, value.north, value.east)}
+    )
 
 
 def _near(prefix: str, value: NearInput) -> Q:
@@ -87,7 +89,11 @@ class PointFilter:
         return Q(**{f"{prefix}acc__lte": value})
 
 
-def _overlaps(prefix: str, since: datetime.datetime | None = None, until: datetime.datetime | None = None) -> Q:
+def _overlaps(
+    prefix: str,
+    since: datetime.datetime | None = None,
+    until: datetime.datetime | None = None,
+) -> Q:
     q = Q()
     if since is not None:
         q &= Q(**{f"{prefix}end__gte": since})
@@ -128,7 +134,10 @@ class VisitFilter:
     @strawberry_django.filter_field
     def min_duration(self, value: float, prefix: str) -> Q:
         """Only visits at least this long (seconds)."""
-        later = ExpressionWrapper(F(f"{prefix}start") + datetime.timedelta(seconds=value), output_field=DateTimeField())
+        later = ExpressionWrapper(
+            F(f"{prefix}start") + datetime.timedelta(seconds=value),
+            output_field=DateTimeField(),
+        )
         return Q(**{f"{prefix}end__gte": later})
 
     @strawberry_django.filter_field

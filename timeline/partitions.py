@@ -20,7 +20,7 @@ _known: set[str] = set()
 
 def month_start(ts: datetime.datetime) -> datetime.date:
     """The first day of ``ts``'s month, in UTC."""
-    utc = ts.astimezone(datetime.timezone.utc)
+    utc = ts.astimezone(datetime.UTC)
     return datetime.date(utc.year, utc.month, 1)
 
 
@@ -54,11 +54,16 @@ def ensure_point_partitions(timestamps: list[datetime.datetime]) -> None:
             name = partition_name(month)
             if not _exists(cursor, name):
                 with transaction.atomic():
-                    cursor.execute("SELECT pg_advisory_xact_lock(%s, %s)", list(PARTITION_LOCK))
+                    cursor.execute(
+                        "SELECT pg_advisory_xact_lock(%s, %s)", list(PARTITION_LOCK)
+                    )
                     if not _exists(cursor, name):
                         cursor.execute(
                             f"CREATE TABLE {name} PARTITION OF timeline_point FOR VALUES FROM (%s) TO (%s)",
-                            [f"{month.isoformat()} 00:00:00+00", f"{next_month(month).isoformat()} 00:00:00+00"],
+                            [
+                                f"{month.isoformat()} 00:00:00+00",
+                                f"{next_month(month).isoformat()} 00:00:00+00",
+                            ],
                         )
             _known.add(name)
 
