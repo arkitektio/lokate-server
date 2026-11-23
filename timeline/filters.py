@@ -9,6 +9,7 @@ import datetime
 
 import strawberry
 import strawberry_django
+from arkitekt_service.collaborations.filters import SharingFilterMixin
 from django.db.models import DateTimeField, ExpressionWrapper, F, Q
 from strawberry import auto
 
@@ -103,7 +104,7 @@ def _overlaps(
 
 
 @strawberry_django.filter_type(models.Visit)
-class VisitFilter:
+class VisitFilter(SharingFilterMixin):
     """Filtering options for visits."""
 
     @strawberry_django.filter_field
@@ -152,7 +153,7 @@ class VisitFilter:
 
 
 @strawberry_django.filter_type(models.Trip)
-class TripFilter:
+class TripFilter(SharingFilterMixin):
     """Filtering options for trips."""
 
     @strawberry_django.filter_field
@@ -182,7 +183,7 @@ class TripFilter:
 
 
 @strawberry_django.filter_type(models.Place)
-class PlaceFilter:
+class PlaceFilter(SharingFilterMixin):
     """Filtering options for places."""
 
     @strawberry_django.filter_field

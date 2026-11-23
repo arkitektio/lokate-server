@@ -3,6 +3,10 @@
 Every type is scoped to the caller in its ``get_queryset``, which strawberry_django runs for
 list fields, single fetches and nested relations alike: a user only ever reads their own rows,
 from any of their devices. Tombstoned places are sync bookkeeping and never listed.
+
+A guest of the organization (``arkitekt_service.collaborations``) reads the visits, trips and
+places someone put in their collaborations, and nothing else: not their own rows, not anyone's
+points or devices. What a place counts of its visits is counted over the shared ones.
 """
 
 import datetime
@@ -11,7 +15,9 @@ from typing import TypeVar
 import kante
 import strawberry
 import strawberry_django
-from django.db.models import Model, QuerySet
+from arkitekt_service.collaborations.guests import guest_of, object_scope
+from asgiref.sync import sync_to_async
+from django.db.models import Count, Max, Model, QuerySet
 from kante.types import Info
 
 from timeline import enums, filters, loaders, models
@@ -19,14 +25,38 @@ from timeline import enums, filters, loaders, models
 _M = TypeVar("_M", bound=Model)
 
 
+def held_to_guest(queryset: QuerySet[_M]) -> QuerySet[_M]:
+    """For a guest: the rows in their collaborations, whoever's they are, wherever they are read
+    (not only at a root field: what a nested field counts is counted over them)."""
+    held: QuerySet[_M] = object_scope(queryset)
+    return held
+
+
 class UserScoped:
-    """Mixin: only the calling user's rows."""
+    """Mixin: only the calling user's rows (a guest: what is in their collaborations)."""
 
     @classmethod
     def get_queryset(
         cls, queryset: QuerySet[_M], info: Info, **kwargs: object
     ) -> QuerySet[_M]:
+        if guest_of(info) is not None:
+            return held_to_guest(queryset)
         return queryset.filter(user=info.context.request.user)
+
+
+def _shared_visit_stats(user_id: int, client_id: str) -> "loaders.VisitStats":
+    """The visits matched to a place that are in the guest's collaborations: how many, and the latest end."""
+    found = held_to_guest(
+        models.Visit.objects.filter(user_id=user_id, place_client_id=client_id)
+    ).aggregate(n=Count("id"), last=Max("end"))
+    return loaders.VisitStats(count=found["n"], last_end=found["last"])
+
+
+async def _place_visit_stats(place: object, info: Info) -> "loaders.VisitStats":
+    key = (place.user_id, place.client_id)  # type: ignore[attr-defined]
+    if guest_of(info) is not None:
+        return await sync_to_async(_shared_visit_stats)(*key)
+    return await loaders.visit_stats(info).load(key)
 
 
 @kante.django_type(
@@ -110,15 +140,13 @@ class Place(UserScoped):
         description="How many visits were matched to it.", only=["user_id", "client_id"]
     )
     async def visit_count(self, info: Info) -> int:
-        stats = await loaders.visit_stats(info).load((self.user_id, self.client_id))  # type: ignore[attr-defined]
-        return stats.count
+        return (await _place_visit_stats(self, info)).count
 
     @strawberry_django.field(
         description="When the latest visit to it ended.", only=["user_id", "client_id"]
     )
     async def last_visit_at(self, info: Info) -> datetime.datetime | None:
-        stats = await loaders.visit_stats(info).load((self.user_id, self.client_id))  # type: ignore[attr-defined]
-        return stats.last_end
+        return (await _place_visit_stats(self, info)).last_end
 
 
 @kante.django_type(

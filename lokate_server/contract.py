@@ -12,12 +12,14 @@ from arkitekt_service.contract import (
     Contract,
     Description,
     Facts,
+    Hosts,
     Job,
     Needs,
     Offers,
     Role,
     Scope,
     Start,
+    Structure,
     blocks,
 )
 
@@ -35,6 +37,10 @@ SCOPES = [
         description="Back up your location timeline and places, and delete the server's copy.",
     ),
     Scope(
+        key="lokate_share",
+        description="Share visits, trips and places of your timeline with people outside your organization through collaborations, for them to read.",
+    ),
+    Scope(
         key="lokate_all",
         description="Do everything in Lokate on your behalf.",
         is_all_scope=True,
@@ -50,7 +56,7 @@ ROLES = [
     ),
     Role(
         key="lokate_editor",
-        description="Back up location timelines.",
+        description="Back up location timelines, and share visits, trips and places of your own through collaborations.",
         is_default_role=True,
     ),
 ]
@@ -58,6 +64,30 @@ ROLES = [
 #: The role every write asks for.
 EDITOR = "lokate_editor"
 ADMIN = "lokate_admin"
+
+#: What exists on a hub because this service is there: what a person shares of their timeline
+#: (``lokate_server.service`` binds each to its model). Hosted silently: a timeline is one person's,
+#: and nothing of it is ever announced to their organization (no signals). It carries no
+#: descriptors. A location fix is no structure: it is never shared.
+HOSTS = Hosts(
+    structures=[
+        Structure(
+            identifier="@lokate/visit",
+            label="Visit",
+            description="A stay at one spot of a person's location timeline, as their phone segmented it: where, from when to when.",
+        ),
+        Structure(
+            identifier="@lokate/trip",
+            label="Trip",
+            description="A movement between two visits of a person's location timeline: when, how far and how it was travelled (walk, bike, vehicle).",
+        ),
+        Structure(
+            identifier="@lokate/place",
+            label="Place",
+            description="A named place of a person's location timeline (home, work), that their visits are matched to.",
+        ),
+    ],
+)
 
 
 def render(facts: Facts) -> dict[str, JSON]:
@@ -73,6 +103,7 @@ contract = Contract(
         summary="A backup of your location timeline.",
         needs=Needs(scopes=SCOPES, roles=ROLES, storage=["media"]),
         offers=Offers(),
+        hosts=HOSTS,
     ),
     settings=Settings,
     render=render,

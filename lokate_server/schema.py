@@ -7,21 +7,55 @@ aggregates (``day``, ``route``, ``stats``, ``placeStats``).
 
 Every field acts as the token's user and only ever sees that user's rows; every write is the
 token's device (``client_device``). There is no admin or cross-user API.
+
+A person shares visits, trips and places of their own with a guest of their organization through a
+collaboration (lok's, by key). The guest reads what was put in their collaborations and nothing
+else (``timeline.types.UserScoped``, and the ``CollaborationGate``, which drops whatever a resolver
+hands out that is in none of them); aggregates (``day``, ``route``, ``stats``, counts, ``changes``)
+are closed to them, and no mutation is open to them.
 """
 
 from typing import Any
 
 import strawberry
 import strawberry_django
-from arkitekt_service.graphql import TelemetryExtension
-from authentikate.catch_alls import declare_catch_alls
+from arkitekt_service.collaborations import graphql as collaboration_types
+from arkitekt_service.graphql import (
+    CollaborationGate,
+    TelemetryExtension,
+    annotate_schema,
+)
 from authentikate.strawberry.directives import AuthExtension
 from authentikate.strawberry.extension import AuthentikateExtension
+from django.db.models import Model
+from kante.types import Info
 from strawberry_django.optimizer import DjangoOptimizerExtension
 
-from lokate_server.contract import EDITOR, contract
+from lokate_server.contract import EDITOR
 from lokate_server.logs import QuietErrorsSchema
-from timeline import backup, graphql, queries, types
+from lokate_server.service import service as lokate_service
+from timeline import backup, graphql, models, queries, types
+
+#: What a person may put in a collaboration: their own visits, trips and (live) places. A location
+#: fix and a device never are.
+SHAREABLE: frozenset[type[Model]] = frozenset({models.Visit, models.Trip, models.Place})
+
+
+def _shareable(model: type[Model], id: strawberry.ID, info: Info) -> Model:
+    """The caller's own object a collaboration mutation names; refused unless it is shareable."""
+    if model not in SHAREABLE:
+        raise PermissionError(
+            f"A {model.__name__} is never put in a collaboration: only visits, trips and places are"
+        )
+    rows = model._default_manager.filter(user=info.context.request.user)
+    if model is models.Place:
+        rows = rows.filter(deleted_at=None)
+    found: Model = rows.get(pk=id)
+    return found
+
+
+#: The collaborations a timeline is shared in, which a guest of the organization is granted.
+collaboration_api = collaboration_types.resolvers(fetch=_shareable)
 
 
 def field(scope: str = "lokate_read", **kwargs: Any) -> Any:  # noqa: ANN401 - as strawberry_django.field: the value of `x: T = field()`
@@ -43,6 +77,20 @@ def mutation(
 @strawberry.type
 class Query:
     """The root query type."""
+
+    # Collaborations
+    collaborations: list[collaboration_types.Collaboration] = field(
+        resolver=collaboration_api.collaborations,
+        description="The organization's collaborations lokate holds visits, trips or places in (a guest: the ones granted to them).",
+    )
+    collaboration: collaboration_types.Collaboration = field(
+        resolver=collaboration_api.collaboration,
+        description="What lokate holds in a collaboration, by its key (lok's).",
+    )
+    collaborations_stats: collaboration_types.CollaborationStats = field(
+        resolver=collaboration_api.collaborations_stats,
+        description="Count the collaborations `collaborations` lists, and the objects in them.",
+    )
 
     # The stored rows, as lists (paginated, filterable, orderable) and one by id.
     devices: list[types.Device] = field(
@@ -109,6 +157,33 @@ class Query:
 class Mutation:
     """The root mutation type."""
 
+    # Collaborations (view only for the guests they are granted to)
+    add_to_collaboration = mutation(
+        scope="lokate_share",
+        resolver=collaboration_api.add_to_collaboration,
+        description="Put one of your visits (with the place it was matched to), trips or places in a collaboration (lok's, by its key) for its guests to read. Never a location fix or a device. The first thing put in makes lokate's row of the collaboration.",
+    )
+    add_many_to_collaboration = mutation(
+        scope="lokate_share",
+        resolver=collaboration_api.add_many_to_collaboration,
+        description="Put several of your visits, trips or places in a collaboration at once; all or none.",
+    )
+    share_workflow = mutation(
+        scope="lokate_share",
+        resolver=collaboration_api.share_workflow,
+        description="Put what a workflow (its root task) created in lokate in a collaboration. A timeline is backed up by phones, not made by workflows: every structure is reported unknown and nothing is put in.",
+    )
+    remove_from_collaboration = mutation(
+        scope="lokate_share",
+        resolver=collaboration_api.remove_from_collaboration,
+        description="Take a visit, trip or place out of a collaboration, with what it brought that nothing else there needs.",
+    )
+    delete_collaboration = mutation(
+        scope="lokate_share",
+        resolver=collaboration_api.delete_collaboration,
+        description="Take everything lokate holds in a collaboration (by its key) out of it: its guests read none of it here any more. lok's collaboration and its grants stay.",
+    )
+
     upload_points: graphql.UploadResult = mutation(
         resolver=graphql.upload_points,
         description=f"Store points (at most {backup.MAX_BATCH} per call). Safe to repeat: a point already stored counts as a duplicate.",
@@ -135,12 +210,16 @@ class Schema(QuietErrorsSchema, strawberry.federation.Schema):
 schema = Schema(
     query=Query,
     mutation=Mutation,
-    extensions=[TelemetryExtension, DjangoOptimizerExtension, AuthentikateExtension],
+    # A guest of the organization is handed only what is in their collaborations (CollaborationGate).
+    extensions=[
+        TelemetryExtension,
+        DjangoOptimizerExtension,
+        AuthentikateExtension,
+        CollaborationGate,
+    ],
 )
 
-# `lokate_all` passes every scope check and `lokate_admin` every role check. lokate has no hub
-# Service (no structures to annotate), so it tells authentikate itself rather than through
-# arkitekt_service.graphql.annotate_schema.
-declare_catch_alls(
-    scope=contract.description.all_scope, role=contract.description.admin_role
-)
+# Which structure each type is (`@identified`), the contract's catch-alls (`lokate_all` passes
+# every scope check, `lokate_admin` every role check), and, behind the gate, that lokate lets
+# guests in.
+annotate_schema(schema, lokate_service)
